@@ -1,5 +1,5 @@
 # mainnet-dust-generation-scripts
-1) update datum json with your 28-byte stake key hash and 33-byte dust public key
+1) update datum json with your 28-byte stake key hash and 33-byte dust public key (28-byte stake key hash via: 'echo "stake1u9..." | cardano-address address inspect')
 2) run mkHashes.sh to create mapping_validator hash and address files
 3) edit mkCollateral.sh with proper UTXO to be used for collateral
 4) run mkCollateral.sh
