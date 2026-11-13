@@ -55,7 +55,8 @@ print(f"Cold address: payment key {b[2:58]}, stake key {b[58:]}")
 EOF
 
 "$CLI" conway query utxo --address "$COLD_ADDR" --socket-path "$SOCKET_PATH" --output-json > cold-utxos.json
-mapfile -t COLD_IN < <(python3 -I - cold-utxos.json "$CNIGHT_POLICY" <<'EOF'
+# Command substitution, not < <(...): a failure inside process substitution would not stop the script.
+PICKED="$(python3 -I - cold-utxos.json "$CNIGHT_POLICY" <<'EOF'
 import json, sys
 u, policy = json.load(open(sys.argv[1])), sys.argv[2]
 picked = [k for k, v in sorted(u.items()) if policy in v["value"]]
@@ -65,7 +66,8 @@ total = sum(sum(u[k]["value"][policy].values()) for k in picked)
 print(f"{len(picked)} cNIGHT UTxO(s), {total} unit(s) in all", file=sys.stderr)
 print("\n".join(picked))
 EOF
-)
+)"
+mapfile -t COLD_IN <<< "$PICKED"
 
 TX_IN=()
 for i in "${COLD_IN[@]}"; do TX_IN+=(--tx-in "$i"); done

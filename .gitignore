@@ -25,6 +25,7 @@ cold.addr
 cold-addr-info.json
 cold-utxos.json
 protocol-params.json
+*.old
 
 # Local wallet folders and their files
 preprod-test/

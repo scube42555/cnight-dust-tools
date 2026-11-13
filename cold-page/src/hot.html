@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; media-src blob: mediastream:; connect-src 'self'; form-action 'none'; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
+<title>DUST Hot Sponsor</title>
+<style>
+:root {
+  --bg: #f6f5f1; --panel: #ffffff; --ink: #1d1f22; --muted: #5d636b; --line: #dcd9d1;
+  --accent: #2f5d8a; --accent-ink: #ffffff; --ok: #1f7a46; --ok-bg: #e6f3ea; --err: #a3241c; --err-bg: #fbe9e7;
+  --warn: #8a5a00; --warn-bg: #fdf3dc; --info-bg: #eef2f7; --code-bg: #f1efe9; --main: #a3241c;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15171a; --panel: #1e2125; --ink: #e8e6e1; --muted: #9aa0a8; --line: #33373d;
+    --accent: #7fb0e0; --accent-ink: #0d1520; --ok: #6fcf97; --ok-bg: #16281e; --err: #ff8a80; --err-bg: #331a18;
+    --warn: #f2c66d; --warn-bg: #2e2614; --info-bg: #1c2430; --code-bg: #26292e; --main: #ff8a80;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15171a; --panel: #1e2125; --ink: #e8e6e1; --muted: #9aa0a8; --line: #33373d;
+  --accent: #7fb0e0; --accent-ink: #0d1520; --ok: #6fcf97; --ok-bg: #16281e; --err: #ff8a80; --err-bg: #331a18;
+  --warn: #f2c66d; --warn-bg: #2e2614; --info-bg: #1c2430; --code-bg: #26292e; --main: #ff8a80;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 960px; margin: 0 auto; padding: 20px 16px 64px; }
+h1 { font-size: 22px; margin: 4px 0 2px; }
+h2 { font-size: 17px; margin: 0 0 10px; display: flex; gap: 10px; align-items: baseline; }
+h2 .n { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font-size: 14px; flex: none; }
+h3 { font-size: 15px; margin: 14px 0 4px; }
+p { margin: 6px 0; }
+.sub { color: var(--muted); margin: 0 0 12px; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin: 14px 0; }
+section.locked { opacity: .55; }
+.dropping { outline: 2px dashed var(--accent); outline-offset: 4px; }
+label { display: block; font-weight: 600; margin: 10px 0 4px; }
+label.inline { display: inline-flex; gap: 8px; align-items: center; font-weight: 400; }
+textarea, input[type=text] {
+  width: 100%; font: 14px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--ink);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px;
+}
+textarea { min-height: 60px; resize: vertical; }
+.row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: end; }
+button, .btn {
+  font: inherit; font-weight: 600; padding: 7px 14px; border-radius: 6px; border: 1px solid var(--accent);
+  background: var(--accent); color: var(--accent-ink); cursor: pointer; text-decoration: none; display: inline-block;
+}
+button.secondary, .btn.secondary { background: transparent; color: var(--accent); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; align-items: center; }
+.tabs { display: flex; gap: 8px; margin: 12px 0 0; flex-wrap: wrap; }
+.tabs button { background: transparent; color: var(--accent); }
+.tabs button[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); }
+.banner { border-radius: 8px; padding: 10px 12px; margin: 10px 0; }
+.banner.err { background: var(--err-bg); color: var(--err); }
+.banner.warn { background: var(--warn-bg); color: var(--warn); }
+.banner.ok { background: var(--ok-bg); color: var(--ok); }
+.banner.info { background: var(--info-bg); }
+.net { font-weight: 700; padding: 2px 8px; border-radius: 4px; background: var(--info-bg); }
+.net.mainnet { background: var(--err-bg); color: var(--main); }
+dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 8px 0 0; }
+dl.kv dt { color: var(--muted); }
+dl.kv dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; overflow-wrap: anywhere; white-space: pre-wrap; }
+pre { background: var(--code-bg); border-radius: 6px; padding: 10px; overflow-x: auto; font-size: 12.5px; margin: 8px 0; white-space: pre-wrap; word-break: break-all; }
+pre.log { max-height: 260px; overflow-y: auto; }
+ul.checks { list-style: none; padding: 0; margin: 8px 0; }
+ul.checks li { padding: 6px 10px 6px 34px; border-radius: 6px; margin: 4px 0; position: relative; }
+ul.checks li::before { position: absolute; left: 10px; top: 6px; font-weight: 700; }
+ul.checks li.ok { background: var(--ok-bg); } ul.checks li.ok::before { content: "✓"; color: var(--ok); }
+ul.checks li.error { background: var(--err-bg); color: var(--err); } ul.checks li.error::before { content: "✗"; }
+ul.checks li.warn { background: var(--warn-bg); color: var(--warn); } ul.checks li.warn::before { content: "!"; }
+ul.checks li.info { background: var(--info-bg); } ul.checks li.info::before { content: "i"; color: var(--muted); }
+.qrbox { display: grid; grid-template-columns: 380px minmax(0, 1fr); gap: 16px; align-items: start; margin-top: 12px; }
+.qr { background: #fff; border-radius: 6px; padding: 6px; width: 100%; max-width: 380px; }
+.qr svg { display: block; width: 100%; height: auto; }
+.qrmeta { color: var(--muted); font-size: 13px; }
+.qrmeta pre { max-height: 160px; overflow-y: auto; }
+video { width: 100%; max-width: 420px; border-radius: 6px; background: #000; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+[hidden] { display: none !important; }
+@media (max-width: 680px) { .qrbox { grid-template-columns: 1fr; } dl.kv { grid-template-columns: 1fr; } dl.kv dd { margin-bottom: 6px; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>DUST generation: hot sponsor</h1>
+  <p class="sub">The online side of <span class="mono">dust-register-cold.html</span>. It builds the transactions with your
+    node, shows them to the cold machine as QR codes, takes back the cold signature and submits. The work is done by the
+    scripts in <span class="mono">hot/</span>; this page only drives them through <span class="mono">hot/hot-server.py</span>.</p>
+  <div id="fatal" class="banner err" hidden></div>
+
+  <section id="status">
+    <h2>Node and sponsor <span id="net" class="net"></span></h2>
+    <dl class="kv">
+      <dt>Node</dt><dd id="tip">—</dd>
+      <dt>Folder</dt><dd id="dir">—</dd>
+      <dt>Sponsor</dt><dd id="sponsor">—</dd>
+      <dt>Mapping validator</dt><dd id="validator">—</dd>
+    </dl>
+    <div id="statusWarn" class="banner warn" hidden></div>
+    <div class="actions"><button id="refresh" class="secondary" type="button">Refresh</button></div>
+    <div class="tabs" role="tablist">
+      <button id="tabReg" role="tab" type="button" aria-selected="true">Registration</button>
+      <button id="tabMove" role="tab" type="button" aria-selected="false">Start generation (optional self-send)</button>
+    </div>
+  </section>
+
+  <div id="flowReg">
+    <section id="r1">
+      <h2><span class="n">1</span>Receive the datum from the cold page</h2>
+      <p>The cold page shows it in its step 2 (stake key hash and Dust public key). Scan it, drop
+        <span class="mono">datum.json</span> on this section, or paste it.</p>
+      <div class="recv" data-kinds="datum" data-file="datum.json"></div>
+      <div id="r1Out" hidden>
+        <dl class="kv"><dt>Stake key hash</dt><dd id="rStake"></dd><dt>Dust public key</dt><dd id="rDust"></dd></dl>
+        <div id="rRegistered"></div>
+      </div>
+    </section>
+
+    <section id="r2" class="locked">
+      <h2><span class="n">2</span>Build the registration and show it to the cold machine</h2>
+      <p>The sponsor pays the ADA locked with the registration token (the ledger minimum), the fee and the collateral.</p>
+      <div class="actions"><button id="rBuild" type="button" disabled>Build registration</button></div>
+      <div class="built"></div>
+    </section>
+
+    <section id="r3" class="locked">
+      <h2><span class="n">3</span>Receive the stake-key witness</h2>
+      <p>The cold page shows <span class="mono">cold-stake.witness</span> after you type SIGN there.</p>
+      <div class="recv" data-kinds="witness" data-file="cold-stake.witness"></div>
+      <div class="assembled"></div>
+    </section>
+
+    <section id="r4" class="locked">
+      <h2><span class="n">4</span>Submit</h2>
+      <div class="submit"></div>
+    </section>
+  </div>
+
+  <div id="flowMove" hidden>
+    <section id="m0">
+      <p>Generation starts when cNIGHT arrives in a new UTxO at an address with the registered stake key. Sending cNIGHT
+        to the cold address from another wallet does that with nothing to sign. Use this self-send only for cNIGHT the cold
+        wallet already holds. Do it after the registration is on chain.</p>
+    </section>
+    <section id="m1">
+      <h2><span class="n">1</span>Receive the cold address</h2>
+      <p>The cold page shows it in its step 2 (<span class="mono">cold.addr</span>). Scan it, drop it here, or paste it.</p>
+      <div class="recv" data-kinds="addr" data-file="cold.addr"></div>
+      <div id="m1Out" hidden><dl class="kv"><dt>Cold address</dt><dd id="mAddr"></dd></dl></div>
+    </section>
+
+    <section id="m2" class="locked">
+      <h2><span class="n">2</span>Build the self-send and show it to the cold machine</h2>
+      <p>Every cNIGHT UTxO at the cold address is spent and everything comes back to it. Without a gift the cold wallet
+        pays the fee (about 0.2 ADA). With a gift, one small ADA-only sponsor UTxO (1 to 5 ADA) is added and its whole
+        value goes to the cold wallet.</p>
+      <label class="inline"><input id="mGift" type="checkbox"> Add a sponsor gift UTxO to pay the fee</label>
+      <div class="actions"><button id="mBuild" type="button" disabled>Build self-send</button></div>
+      <div class="built"></div>
+    </section>
+
+    <section id="m3" class="locked">
+      <h2><span class="n">3</span>Receive the payment-key witness</h2>
+      <p>The cold page shows <span class="mono">cold-payment.witness</span> after you type SIGN there.</p>
+      <div class="recv" data-kinds="witness" data-file="cold-payment.witness"></div>
+      <div class="assembled"></div>
+    </section>
+
+    <section id="m4" class="locked">
+      <h2><span class="n">4</span>Submit</h2>
+      <div class="submit"></div>
+    </section>
+  </div>
+</main>
+
+<script>/*FFLATE*/</script>
+<script>/*QRCODE*/</script>
+<script>/*JSQR*/</script>
+<script>/*COLDTX*/</script>
+<script>/*WASM_GLUE*/</script>
+<script>window.COLD_WASM_B64 = "/*WASM_B64*/";</script>
+<script>/*UI*/</script>
+</body>
+</html>

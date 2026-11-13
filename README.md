@@ -12,7 +12,7 @@ Registers the cNIGHT held by a Cardano stake key for DUST generation on Midnight
 | Machine | What runs there |
 |---|---|
 | Cold (offline) | `dust-register-cold.html`: one self-contained page, no network access (CSP `connect-src 'none'`) |
-| Hot (online) | `hot/build-register.sh`, `hot/assemble-submit.sh`: cardano-cli with your node; the sponsor's keys |
+| Hot (online) | `hot/hot-server.py` and its page, or the scripts in `hot/` directly: cardano-cli with your node; the sponsor's keys |
 
 Two transactions, both signed on the cold machine:
 
@@ -57,6 +57,32 @@ Two transactions, both signed on the cold machine:
    a sponsor UTxO was used). It checks that the witness key is the payment key of `cold.addr`, and submits after you
    type `SUBMIT`.
 10. DUST should start to appear at the Dust address the page shows about 12 hours later.
+
+### Hot page
+
+Instead of running the hot scripts by hand, start the local hot page in the folder that holds the sponsor's
+`payment.addr` and `payment.skey`:
+
+```bash
+python3 hot/hot-server.py --dir mainnet --socket /tmp/mainnet.socket --cli /path/to/cardano-cli
+# preprod: --network preprod --validator <preprod mapping validator .plutus>
+```
+
+Open the URL it prints. The page shows the network, the node's sync and the sponsor's ADA, and has two tabs,
+*Registration* and *Start generation (optional self-send)*. Each tab has four steps:
+1. Receive the datum or the cold address: camera, dropped file or pasted QR frames.
+2. Build with your node. The page shows the transaction, runs the same checks the cold page will run, and shows it
+   as cycling QR codes, with buttons for a slower or faster cycle.
+3. Receive the cold witness: camera, drop or paste. The page checks it and assembles the transaction.
+4. Type `SUBMIT`, then the page watches the chain until the transaction lands.
+
+The registration tab also says whether the stake key is already registered.
+
+All the Cardano work is done by the scripts in `hot/`, run with fixed arguments. The server never reads
+`payment.skey`; it passes its path to the scripts. It listens on 127.0.0.1 only. Every request needs the token from
+the printed URL, and requests whose Host or Origin header is not the server itself are refused, so other web pages
+in the same browser cannot drive it. Building again renames the previous transaction, witness and signed files to
+`*.old`.
 
 ### Mainnet
 
@@ -112,6 +138,9 @@ validator names this policy in its own script bytes), preprod `d2dbff622e509dda2
 | midnight-cold-hot `qr_scan.py --clipboard` with a fake camera and fake clipboard tools | Passed; not yet run with a real clipboard |
 | Mainnet validator vs the preprod one used on chain: decoded to UPLC, the programs are identical except one conditional next to the `one_shot_ref` code, which excludes the cNIGHT policy (mainnet: `0691b2fe…` and the bytes `mainnet`; preprod: `d2dbff62…`) | Checked |
 | cardano-cli `calculate-plutus-script-cost offline` on a mainnet-shaped registration: the mainnet validator accepts it with the same execution units as the preprod validator (80,108 memory, 28,929,016 steps), so the registration takes the same path; it rejects a datum naming another stake key | Passed |
+| Hot page in headless Chromium against preprod (scratch folder, throwaway sponsor key, test mnemonic, never submitted): datum received as QR frames, registration built and checked, 14 QR frames shown, witness received, assembled with the same txid; wrong confirmations and a txid not matching the assembled transaction refused; self-send built for the preprod cold wallet and its checks pass | Passed |
+| Hot server refuses requests without the token, from another Origin, with another Host (DNS rebinding), and writes only its four input files | Passed |
+| Hot page submission and landing watch | **Not yet run** |
 | A cNIGHT self-send on preprod: both cNIGHT UTxOs spent, all cNIGHT in one new UTxO at the cold address, cold wallet paid the 0.17 ADA fee | Passed |
 | DUST appears at the Dust address (about 12 hours after the self-send) | **Not yet confirmed** |
 | `hot/build-register.sh` against a mainnet node: `transaction build` runs the mainnet validator on live chain data and it passes; 1.353340 ADA locked (ledger minimum), fee 0.344 ADA; the cold page's mainnet checks all pass | Passed |
