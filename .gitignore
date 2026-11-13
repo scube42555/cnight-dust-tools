@@ -1,0 +1,31 @@
+# Build output (the deliverable dust-register-cold.html IS committed; rebuild it with cold-page/build.sh)
+cold-page/wasm/target/
+cold-page/wasm/pkg/
+
+# Wallet and transaction data: never commit
+*.skey
+*.prv
+*.xsk
+*-keys/
+datum.json
+datum-*.json
+!datum-EXAMPLE.json
+*.unsigned
+*.signed
+*.witness
+*.mqr
+register-send.html
+sponsor-utxos.json
+register-signed-tx.hash
+collateral-*
+register-*.tx
+move-cnight-send.html
+move-cnight-tx.hash
+cold.addr
+cold-addr-info.json
+cold-utxos.json
+protocol-params.json
+
+# Local wallet folders and their files
+preprod-test/
+mainnet/

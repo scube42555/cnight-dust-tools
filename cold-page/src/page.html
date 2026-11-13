@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; media-src blob: mediastream:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
+<title>DUST Cold Signer</title>
+<style>
+:root {
+  --bg: #f6f5f1; --panel: #ffffff; --ink: #1d1f22; --muted: #5d636b; --line: #dcd9d1;
+  --accent: #2f5d8a; --accent-ink: #ffffff; --ok: #1f7a46; --ok-bg: #e6f3ea; --err: #a3241c; --err-bg: #fbe9e7;
+  --warn: #8a5a00; --warn-bg: #fdf3dc; --info-bg: #eef2f7; --code-bg: #f1efe9;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15171a; --panel: #1e2125; --ink: #e8e6e1; --muted: #9aa0a8; --line: #33373d;
+    --accent: #7fb0e0; --accent-ink: #0d1520; --ok: #6fcf97; --ok-bg: #16281e; --err: #ff8a80; --err-bg: #331a18;
+    --warn: #f2c66d; --warn-bg: #2e2614; --info-bg: #1c2430; --code-bg: #26292e;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 920px; margin: 0 auto; padding: 20px 16px 64px; }
+h1 { font-size: 22px; margin: 4px 0 2px; }
+h2 { font-size: 17px; margin: 0 0 10px; display: flex; gap: 10px; align-items: baseline; }
+h3 { font-size: 15px; margin: 14px 0 4px; }
+ol.sub { padding-left: 22px; margin-top: -8px; }
+h2 .n { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font-size: 14px; flex: none; }
+p { margin: 6px 0; }
+.sub { color: var(--muted); margin: 0 0 16px; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin: 14px 0; }
+section.locked { opacity: .55; }
+label { display: block; font-weight: 600; margin: 10px 0 4px; }
+label .hint { font-weight: 400; color: var(--muted); }
+textarea, input[type=text], input[type=password], input[type=number], select {
+  width: 100%; font: 14px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--ink);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px;
+}
+input[type=number] { width: 7em; }
+textarea { min-height: 70px; resize: vertical; }
+.row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: end; }
+.row > div { min-width: 0; }
+button, .btn {
+  font: inherit; font-weight: 600; padding: 7px 14px; border-radius: 6px; border: 1px solid var(--accent);
+  background: var(--accent); color: var(--accent-ink); cursor: pointer; text-decoration: none; display: inline-block;
+}
+button.secondary, .btn.secondary { background: transparent; color: var(--accent); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.banner { border-radius: 8px; padding: 10px 12px; margin: 10px 0; }
+.banner.err { background: var(--err-bg); color: var(--err); }
+.banner.warn { background: var(--warn-bg); color: var(--warn); }
+.banner.ok { background: var(--ok-bg); color: var(--ok); }
+.banner.info { background: var(--info-bg); }
+dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 8px 0 0; }
+dl.kv dt { color: var(--muted); }
+dl.kv dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; overflow-wrap: anywhere; }
+pre { background: var(--code-bg); border-radius: 6px; padding: 10px; overflow-x: auto; font-size: 12.5px; margin: 8px 0; }
+ul.checks { list-style: none; padding: 0; margin: 8px 0; }
+ul.checks li { padding: 6px 10px 6px 34px; border-radius: 6px; margin: 4px 0; position: relative; }
+ul.checks li::before { position: absolute; left: 10px; top: 6px; font-weight: 700; }
+ul.checks li.ok { background: var(--ok-bg); } ul.checks li.ok::before { content: "✓"; color: var(--ok); }
+ul.checks li.error { background: var(--err-bg); color: var(--err); } ul.checks li.error::before { content: "✗"; }
+ul.checks li.warn { background: var(--warn-bg); color: var(--warn); } ul.checks li.warn::before { content: "!"; }
+ul.checks li.info { background: var(--info-bg); } ul.checks li.info::before { content: "i"; color: var(--muted); }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+td.mono, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+.tablewrap { overflow-x: auto; }
+.qrbox { display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 16px; align-items: start; margin-top: 12px; }
+.qr { background: #fff; border-radius: 6px; padding: 6px; width: 100%; max-width: 360px; }
+.qrmeta pre, #witness { white-space: pre-wrap; word-break: break-all; }
+.qr svg { display: block; width: 100%; height: auto; }
+.qrmeta { color: var(--muted); font-size: 13px; }
+video { width: 100%; max-width: 420px; border-radius: 6px; background: #000; }
+.tag { display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 12px; background: var(--info-bg); }
+.tag.you { background: var(--ok-bg); color: var(--ok); }
+[hidden] { display: none !important; }
+@media (max-width: 640px) { .qrbox { grid-template-columns: 1fr; } dl.kv { grid-template-columns: 1fr; } dl.kv dd { margin-bottom: 6px; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>DUST generation: cold signer</h1>
+  <p class="sub">Starts DUST generation on Midnight for the cNIGHT held by your Cardano wallet, in two transactions. Use
+    this page on an offline machine; it never connects to a network. A sponsor wallet on the online (hot) machine pays.</p>
+  <ol class="sub">
+    <li><strong>Registration</strong>: signed by your <strong>stake key</strong> only. Your cNIGHT does not move.</li>
+    <li><strong>Start generation</strong> (once the registration is on chain): cNIGHT has to arrive in a new UTxO at your
+      address. Either send cNIGHT to your address (step 2) from another wallet, with nothing to sign here, or do a
+      self-send signed by your <strong>payment key</strong>; the page signs that only if every output comes back to your own address.</li>
+  </ol>
+  <div id="online" class="banner info" hidden>Reminder: make sure this machine is offline (cable unplugged, Wi-Fi and Bluetooth off). The browser reports a network link, but browsers say that whenever any network adapter is up, so it cannot tell whether the machine can actually reach the internet.</div>
+  <div id="loading" class="banner info">Loading the key module…</div>
+  <div id="fatal" class="banner err" hidden></div>
+
+  <section id="s1">
+    <h2><span class="n">1</span>Your keys</h2>
+    <label for="phrase">Recovery phrase <span class="hint">(12 to 24 words; stays on this page)</span></label>
+    <textarea id="phrase" rows="3" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+    <label for="pass">Passphrase <span class="hint">(optional BIP39 "25th word"; leave empty if you have none)</span></label>
+    <input id="pass" type="password" autocomplete="off" spellcheck="false">
+    <div class="row">
+      <div><label for="network">Network</label>
+        <select id="network"><option value="mainnet" selected>Mainnet</option><option value="preprod">Preprod (testing)</option></select></div>
+      <div><label for="account">Account <span class="hint">(usually 0)</span></label><input id="account" type="number" min="0" value="0"></div>
+      <div><label for="index">Stake key index <span class="hint">(usually 0)</span></label><input id="index" type="number" min="0" value="0"></div>
+      <div><label for="payIndex">Address index <span class="hint">(holding the cNIGHT; usually 0)</span></label><input id="payIndex" type="number" min="0" value="0"></div>
+    </div>
+    <div id="validatorRow" hidden>
+      <label for="validator">Mapping validator hash for this network <span class="hint">(preprod is filled in; to use another, paste its 56-character hash, or load its .plutus file or a .mqr of it)</span></label>
+      <div class="row"><div style="flex:1"><input id="validator" type="text" spellcheck="false"></div>
+        <div><input id="plutusFile" type="file" accept=".plutus,.json,.mqr,.txt" hidden><button class="secondary" id="plutusBtn" type="button">Load .plutus</button></div></div>
+      <label for="cnight">cNIGHT policy id for this network <span class="hint">(preprod is filled in)</span></label>
+      <input id="cnight" type="text" spellcheck="false">
+    </div>
+    <div class="actions"><button id="derive" type="button" disabled>Derive keys</button>
+      <button id="clear" class="secondary" type="button">Clear everything</button></div>
+    <div id="keysErr" class="banner err" hidden></div>
+    <div id="keysOut" hidden>
+      <div class="banner info">Check these against your wallets <strong>before</strong> going on. If you mistype the passphrase you get
+        a different, empty wallet, and nothing warns you.</div>
+      <dl class="kv">
+        <dt>Cardano address</dt><dd id="kBase"></dd>
+        <dt>Stake address</dt><dd id="kStake"></dd>
+        <dt>Stake key hash</dt><dd id="kHash"></dd>
+        <dt>Midnight Dust address</dt><dd id="kDust"></dd>
+        <dt>Dust public key</dt><dd id="kDustPk"></dd>
+        <dt>Mapping validator</dt><dd id="kValidator"></dd>
+        <dt>cNIGHT policy</dt><dd id="kCnight"></dd>
+      </dl>
+    </div>
+  </section>
+
+  <section id="s2" class="locked">
+    <h2><span class="n">2</span>Send public data to the hot machine</h2>
+    <h3>For the registration: the datum</h3>
+    <p>The hot machine builds the registration around this datum. It holds only public data: your stake key hash and Dust public key.
+      Save it as <span class="mono">datum.json</span> for <span class="mono">hot/build-register.sh</span>.</p>
+    <pre id="datum"></pre>
+    <div class="actions">
+      <button id="datumQr" type="button" disabled>Show as QR</button>
+      <a id="datumDl" class="btn secondary" download="datum.json" hidden>Download datum.json</a>
+    </div>
+    <div id="datumQrBox"></div>
+    <h3>For starting generation: your address</h3>
+    <p>Once the registration is on chain, send cNIGHT to this address from another wallet, or give it to
+      <span class="mono">hot/build-move-cnight.sh</span> for a self-send (save it as <span class="mono">cold.addr</span>).
+      It uses your registered stake key; cNIGHT sent to an address with another stake key does not count.</p>
+    <pre id="ownAddr"></pre>
+    <div class="actions">
+      <button id="addrQr" type="button" disabled>Show as QR</button>
+      <a id="addrDl" class="btn secondary" download="cold.addr" hidden>Download cold.addr</a>
+    </div>
+    <div id="addrQrBox"></div>
+  </section>
+
+  <section id="s3" class="locked">
+    <h2><span class="n">3</span>Receive the unsigned transaction</h2>
+    <p>On the hot machine, <span class="mono">hot/build-register.sh</span> writes <span class="mono">register.unsigned</span>, and
+      <span class="mono">hot/build-move-cnight.sh</span> writes <span class="mono">move-cnight.unsigned</span>; both show it as QR codes.
+      The page tells the two apart and checks each with its own rules. Bring it here in one of three ways:</p>
+    <ul>
+      <li><strong>Python scanner</strong> (when the browser cannot use the camera, e.g. on Tails): run
+        <span class="mono">python3 tools/qr_scan.py</span> from midnight-cold-hot, then load the <span class="mono">received-tx-*.mqr</span> file here.</li>
+      <li><strong>File</strong>: load the <span class="mono">.unsigned</span> file from a USB stick, or paste its contents.</li>
+      <li><strong>Camera</strong>: scan the hot machine's screen with this browser, if it can use the camera.</li>
+    </ul>
+    <div class="actions">
+      <input id="txFile" type="file" hidden>
+      <button id="txFileBtn" type="button" disabled>Load file…</button>
+      <button id="camBtn" class="secondary" type="button" disabled>Scan with camera</button>
+      <button id="camStop" class="secondary" type="button" hidden>Stop camera</button>
+    </div>
+    <div id="camBox" hidden><p id="camStatus" class="qrmeta"></p><video id="video" playsinline muted></video><canvas id="canvas" hidden></canvas></div>
+    <label for="txText">Or paste <span class="hint">(MQR1 frames, cardano-cli JSON, or CBOR hex)</span></label>
+    <textarea id="txText" rows="4" spellcheck="false"></textarea>
+    <div class="actions"><button id="check" type="button" disabled>Check transaction</button></div>
+    <div id="txErr" class="banner err" hidden></div>
+  </section>
+
+  <section id="s4" class="locked">
+    <h2><span class="n">4</span>Review</h2>
+    <div id="verdict"></div>
+    <ul id="checks" class="checks"></ul>
+    <div id="summary"></div>
+  </section>
+
+  <section id="s5" class="locked">
+    <h2><span class="n">5</span><span id="signTitle">Sign</span></h2>
+    <p>The signature authorizes this one transaction body (hash below) and nothing else. Type <strong>SIGN</strong> to confirm.</p>
+    <dl class="kv"><dt>Body hash</dt><dd id="bodyHash">—</dd></dl>
+    <div class="row"><div><label for="confirm">Confirmation</label><input id="confirm" type="text" autocomplete="off" spellcheck="false" style="width:10em"></div>
+      <div><button id="sign" type="button" disabled>Sign</button></div></div>
+    <div id="signErr" class="banner err" hidden></div>
+    <div id="witnessOut" hidden>
+      <p id="witnessNext"></p>
+      <pre id="witness"></pre>
+      <div class="actions"><a id="witnessDl" class="btn secondary" download="cold-stake.witness">Download</a></div>
+      <div id="witnessQrBox"></div>
+    </div>
+  </section>
+</main>
+
+<script>/*FFLATE*/</script>
+<script>/*QRCODE*/</script>
+<script>/*JSQR*/</script>
+<script>/*COLDTX*/</script>
+<script>/*WASM_GLUE*/</script>
+<script>window.COLD_WASM_B64 = "/*WASM_B64*/";</script>
+<script>/*UI*/</script>
+</body>
+</html>
