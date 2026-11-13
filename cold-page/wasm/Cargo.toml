@@ -1,0 +1,32 @@
+[package]
+name = "dust-register-cold"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Offline key derivation and signing (stake key: registration; payment key: cNIGHT self-send) for the DUST cold page"
+
+[lib]
+crate-type = ["cdylib"]
+
+# Same crates and versions as ../../../revised-iancoleman.io/wasm-derive (Cargo.lock copied from there),
+# so the stake key and Dust key derived here match that page and the midnight-offline-derive CLI.
+# Change the midnight-ledger rev in all three, or none.
+[dependencies]
+wasm-bindgen = "=0.2.100"
+blst = { version = "=0.3.17", features = ["portable", "no-threads"] }
+bip39 = { version = "2.0", features = ["all-languages"] }
+bip32 = "0.5"
+bech32 = "0.9"
+ed25519-bip32 = "0.4"
+pbkdf2 = "0.12"
+sha2 = "0.10"
+blake2 = "0.10"
+getrandom = { version = "0.2", features = ["js"] }
+getrandom03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+getrandom04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
+midnight-ledger = { git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "9f9842e" }
+midnight-serialize = { git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "9f9842e", package = "midnight-serialize" }
+
+[profile.release]
+opt-level = "s"
+lto = true
