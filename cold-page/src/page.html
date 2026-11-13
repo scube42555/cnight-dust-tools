@@ -33,6 +33,7 @@ p { margin: 6px 0; }
 .sub { color: var(--muted); margin: 0 0 16px; }
 section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin: 14px 0; }
 section.locked { opacity: .55; }
+.dropping { outline: 2px dashed var(--accent); outline-offset: 4px; }
 label { display: block; font-weight: 600; margin: 10px 0 4px; }
 label .hint { font-weight: 400; color: var(--muted); }
 textarea, input[type=text], input[type=password], input[type=number], select {
@@ -111,7 +112,7 @@ video { width: 100%; max-width: 420px; border-radius: 6px; background: #000; }
       <div><label for="payIndex">Address index <span class="hint">(holding the cNIGHT; usually 0)</span></label><input id="payIndex" type="number" min="0" value="0"></div>
     </div>
     <div id="validatorRow" hidden>
-      <label for="validator">Mapping validator hash for this network <span class="hint">(preprod is filled in; to use another, paste its 56-character hash, or load its .plutus file or a .mqr of it)</span></label>
+      <label for="validator">Mapping validator hash for this network <span class="hint">(preprod is filled in; to use another, paste its 56-character hash, or load or drop here its .plutus file or a .mqr of it)</span></label>
       <div class="row"><div style="flex:1"><input id="validator" type="text" spellcheck="false"></div>
         <div><input id="plutusFile" type="file" accept=".plutus,.json,.mqr,.txt" hidden><button class="secondary" id="plutusBtn" type="button">Load .plutus</button></div></div>
       <label for="cnight">cNIGHT policy id for this network <span class="hint">(preprod is filled in)</span></label>
@@ -165,8 +166,9 @@ video { width: 100%; max-width: 420px; border-radius: 6px; background: #000; }
       The page tells the two apart and checks each with its own rules. Bring it here in one of three ways:</p>
     <ul>
       <li><strong>Python scanner</strong> (when the browser cannot use the camera, e.g. on Tails): run
-        <span class="mono">python3 tools/qr_scan.py</span> from midnight-cold-hot, then load the <span class="mono">received-tx-*.mqr</span> file here.</li>
-      <li><strong>File</strong>: load the <span class="mono">.unsigned</span> file from a USB stick, or paste its contents.</li>
+        <span class="mono">python3 tools/qr_scan.py</span> from midnight-cold-hot, then drop the <span class="mono">received-tx-*.mqr</span> file on this page.
+        With <span class="mono">--clipboard</span> it also copies the frames: paste them in the box below and the check runs at once.</li>
+      <li><strong>File</strong>: drop the <span class="mono">.unsigned</span> file from a USB stick on this page, load it, or paste its contents.</li>
       <li><strong>Camera</strong>: scan the hot machine's screen with this browser, if it can use the camera.</li>
     </ul>
     <div class="actions">

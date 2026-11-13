@@ -105,10 +105,14 @@
   for (const id of ['phrase', 'pass', 'account', 'index', 'payIndex', 'validator', 'cnight']) $(id).addEventListener('input', () => resetFrom(1));
 
   $('plutusBtn').addEventListener('click', () => $('plutusFile').click());
-  $('plutusFile').addEventListener('change', async () => {
+  $('plutusFile').addEventListener('change', () => {
     const f = $('plutusFile').files[0];
     $('plutusFile').value = '';
-    if (!f) return;
+    if (f) loadPlutusFile(f);
+  });
+
+  async function loadPlutusFile(f) {
+    setErr('keysErr', '');
     try {
       if (f.size > 100000) throw new Error('The file is too large to be a validator.');
       let text = await f.text();
@@ -122,7 +126,7 @@
       $('validator').value = W.blake2b('03' + C.toHex(C.fromHex(j.cborHex)), 28);
       resetFrom(1);
     } catch (e) { setErr('keysErr', `Could not read the .plutus file: ${e.message}`); }
-  });
+  }
 
   function pathNumber(id) {
     const v = $(id).value.trim();
@@ -226,15 +230,59 @@
   // ---------------------------------------------------------------- step 3: receive
 
   $('txFileBtn').addEventListener('click', () => $('txFile').click());
-  $('txFile').addEventListener('change', async () => {
+  $('txFile').addEventListener('change', () => {
     const f = $('txFile').files[0];
     $('txFile').value = '';
-    if (!f) return;
+    if (f) loadTxFile(f);
+  });
+
+  async function loadTxFile(f) {
+    setErr('txErr', '');
+    if (!keys) { setErr('txErr', 'Derive your keys in step 1 first, then load the transaction.'); return; }
     if (f.size > 4 * 1024 * 1024) { setErr('txErr', 'The file is too large (over 4 MB).'); return; }
+    stopCamera();
     $('txText').value = await f.text();
     runCheck();
-  });
+  }
+
   $('txText').addEventListener('input', () => resetFrom(3));
+  // Pasted text (for example frames put on the clipboard by qr_scan.py --clipboard) is checked straight away.
+  $('txText').addEventListener('paste', () => setTimeout(() => { if (keys && $('txText').value.trim()) runCheck(); }, 0));
+
+  // ---------------------------------------------------------------- drag and drop
+  //
+  // A file dropped on the validator row is a .plutus file; anywhere else it is the transaction (.mqr or .unsigned).
+  // Every drop is caught, so a stray drop cannot make the browser leave the page and lose what was entered.
+
+  let dragDepth = 0;
+  const hasFiles = (e) => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+  const dropTarget = (e) => (!$('validatorRow').hidden && $('validatorRow').contains(e.target) ? 'validatorRow' : 's3');
+  const clearDrop = () => { dragDepth = 0; $('s3').classList.remove('dropping'); $('validatorRow').classList.remove('dropping'); };
+  window.addEventListener('dragenter', (e) => { if (hasFiles(e)) { e.preventDefault(); dragDepth++; } });
+  window.addEventListener('dragleave', () => { if (--dragDepth <= 0) clearDrop(); });
+  window.addEventListener('dragover', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    const t = dropTarget(e);
+    $('s3').classList.toggle('dropping', t === 's3');
+    $('validatorRow').classList.toggle('dropping', t === 'validatorRow');
+  });
+  window.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const target = dropTarget(e);
+    clearDrop();
+    const files = e.dataTransfer ? Array.from(e.dataTransfer.files || []) : [];
+    if (files.length === 0) return;
+    if (target === 'validatorRow') {
+      if (files.length > 1) { setErr('keysErr', 'Drop one .plutus file at a time.'); return; }
+      loadPlutusFile(files[0]);
+    } else {
+      if (files.length > 1) { setErr('txErr', 'Drop one file at a time.'); return; }
+      loadTxFile(files[0]);
+      $('s3').scrollIntoView({ block: 'start' });
+    }
+  });
   $('check').addEventListener('click', runCheck);
 
   /** Text from any source -> transaction bytes. MQR1 frames are joined and decompressed first. */
