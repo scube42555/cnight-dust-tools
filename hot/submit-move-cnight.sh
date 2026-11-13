@@ -6,6 +6,7 @@
 #
 # Pass the sponsor key when hot/build-move-cnight.sh was given a sponsor address.
 #
+# ASSEMBLE_ONLY=1 stops after assembling, with exit status 0 (used by hot/hot-server.py, which asks for SUBMIT itself).
 # Environment: CARDANO_CLI, CARDANO_NODE_NETWORK_ID (mainnet, or 1 for preprod), SOCKET_PATH, QR_DECODE (path to qr-decode.js).
 set -euo pipefail
 
@@ -56,6 +57,10 @@ fi
 
 TXID="$(txid move-cnight.signed)"
 echo "Signed transaction: move-cnight.signed (tx id $TXID)"
+if [[ -n "${ASSEMBLE_ONLY:-}" ]]; then
+  echo "Assembled only (ASSEMBLE_ONLY is set); not submitted."
+  exit 0
+fi
 read -r -p "Type SUBMIT to send it to the $CARDANO_NODE_NETWORK_ID network: " answer
 if [[ "$answer" != SUBMIT ]]; then
   echo "Not submitted."

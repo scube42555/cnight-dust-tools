@@ -61,7 +61,8 @@ fi
 
 if [[ -z "$UTXO" || -z "$COLLATERAL" ]]; then
   "$CLI" conway query utxo --address "$SPONSOR_ADDR" --socket-path "$SOCKET_PATH" --output-json > sponsor-utxos.json
-  read -r UTXO COLLATERAL < <(python3 -I - sponsor-utxos.json <<'EOF'
+  # Command substitution, not < <(...): a failure inside process substitution would not stop the script.
+  PICKED="$(python3 -I - sponsor-utxos.json <<'EOF'
 import json, sys
 u = json.load(open(sys.argv[1]))
 # ADA-only UTxOs (no tokens, no datum, no script)
@@ -77,7 +78,8 @@ if not pay or not coll:
              "collateral. Send it two such outputs.")
 print(pay[1], coll[0][1])
 EOF
-)
+)"
+  read -r UTXO COLLATERAL <<< "$PICKED"
 fi
 # ADA locked with the registration token: the ledger minimum for this exact output (address, token, inline datum).
 if [[ -z "${REG_LOVELACE:-}" ]]; then

@@ -6,6 +6,7 @@
 # The cold witness comes from dust-register-cold.html step 5, as a file or as QR frames received with
 # midnight-cold-hot's receiver.html / qr_scan.py (an .mqr file, decoded here with qr-decode.js).
 #
+# ASSEMBLE_ONLY=1 stops after assembling, with exit status 0 (used by hot/hot-server.py, which asks for SUBMIT itself).
 # Environment: CARDANO_CLI (path to cardano-cli), CARDANO_NODE_NETWORK_ID (mainnet, or 1 for preprod), SOCKET_PATH, QR_DECODE (path to qr-decode.js).
 # Run against a preprod node (12 Nov 2026) with cardano-cli 11.2.3.
 set -euo pipefail
@@ -50,6 +51,10 @@ EOF
 
 TXID="$(txid register.signed)"
 echo "Signed transaction: register.signed (tx id $TXID)"
+if [[ -n "${ASSEMBLE_ONLY:-}" ]]; then
+  echo "Assembled only (ASSEMBLE_ONLY is set); not submitted."
+  exit 0
+fi
 read -r -p "Type SUBMIT to send it to the $CARDANO_NODE_NETWORK_ID network: " answer
 if [[ "$answer" != SUBMIT ]]; then
   echo "Not submitted."
