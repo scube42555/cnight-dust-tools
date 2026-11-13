@@ -29,8 +29,9 @@ Two transactions, both signed on the cold machine:
 3. **Hot:** `hot/build-register.sh datum.json sponsor-payment.addr`. It picks two ADA-only sponsor UTxOs, the
    largest (at least 3 ADA) to pay and another of at least 2 ADA for collateral, or you pass them as arguments. It builds `register.unsigned`
    and writes `register-send.html` (12 or so cycling QR codes, via midnight-cold-hot's `qr-send.js`).
-4. **Hot → cold:** scan with `python3 tools/qr_scan.py` (midnight-cold-hot) and load the `.mqr` file in the page, or
-   load `register.unsigned` from USB, or use the page's camera button if the browser can use the camera.
+4. **Hot → cold:** scan with `python3 tools/qr_scan.py` (midnight-cold-hot) and drop the `.mqr` file on the page, or
+   run it with `--clipboard` and paste the frames into the page's text box (the check runs as soon as you paste). Or
+   drop `register.unsigned` from USB on the page, or use the page's camera button if the browser can use the camera.
 5. **Cold:** the page decodes the transaction and checks it. It refuses to sign if anything is off: certificates,
    withdrawals, governance or donation fields, unknown fields, a datum naming another stake key or Dust key, output 0
    not going to the mapping validator with exactly one token, any mint other than one registration token, a deregister
@@ -107,6 +108,8 @@ validator names this policy in its own script bytes), preprod `d2dbff622e509dda2
 | Self-send checks: 19 bad variants refused (other addresses, same stake key with another payment key, no cNIGHT, high fee, mint, scripts, collateral, certificates, withdrawals, datums, other signers, wrong network) | Passed (`node --test cold-page/tests/`) |
 | Page in headless Chromium: self-send built by cardano-cli is recognised, checked and signed with the payment key; cardano-cli assembles the witness and the signature verifies; registration path unchanged | Passed |
 | `hot/submit-move-cnight.sh` offline up to the SUBMIT prompt; refuses a witness from another payment key | Passed |
+| Page in headless Chromium: a dropped `.mqr` or `.unsigned` is loaded and checked; a `.plutus` dropped on the validator row sets the hash; pasted frames are checked at once; a drop before the keys are derived or of two files is refused; a stray drop does not leave the page | Passed |
+| midnight-cold-hot `qr_scan.py --clipboard` with a fake camera and fake clipboard tools | Passed; not yet run with a real clipboard |
 | Mainnet validator vs the preprod one used on chain: decoded to UPLC, the programs are identical except one conditional next to the `one_shot_ref` code, which excludes the cNIGHT policy (mainnet: `0691b2fe…` and the bytes `mainnet`; preprod: `d2dbff62…`) | Checked |
 | cardano-cli `calculate-plutus-script-cost offline` on a mainnet-shaped registration: the mainnet validator accepts it with the same execution units as the preprod validator (80,108 memory, 28,929,016 steps), so the registration takes the same path; it rejects a datum naming another stake key | Passed |
 | A cNIGHT self-send on preprod: both cNIGHT UTxOs spent, all cNIGHT in one new UTxO at the cold address, cold wallet paid the 0.17 ADA fee | Passed |
