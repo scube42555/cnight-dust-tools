@@ -153,6 +153,11 @@ Mainnet is the default everywhere; nothing needs to be set for the network excep
   If the sponsor's ADA is not split that way (one UTxO only, or ADA sitting with tokens such as cNIGHT), run
   `hot/prepare-sponsor.sh payment.addr payment.skey`: it sends everything back to the sponsor's own address as a 2 ADA
   collateral UTxO, one UTxO holding any tokens with the minimum ADA, and the rest as the paying UTxO, after a typed SUBMIT.
+- **Emptying the sponsor:** `hot/sweep-address.sh payment.addr payment.skey <destination>` sends every UTxO at the
+  address (all its ADA and tokens, less the fee) to the destination in one transaction, after you type the
+  destination's last 8 characters and then SUBMIT. It refuses a destination on another network or at a script address.
+  Staking rewards and the stake key deposit are not UTxOs and stay with the stake key; the cold wallet cannot be swept
+  this way (its key is on the cold machine).
 - **Hot scripts:** run them in the folder that holds `datum.json` and the keys, with `SOCKET_PATH` set to your mainnet
   node's socket (default `/ada/mainnet/db/node.socket`) and `CARDANO_CLI` if needed. Leave `CARDANO_NODE_NETWORK_ID` and
   `MAPPING_VALIDATOR` unset: `build-register.sh` stops if the validator does not hash to `73e4aea3…`.
@@ -196,6 +201,7 @@ validator names this policy in its own script bytes), preprod `d2dbff622e509dda2
 | cardano-cli `calculate-plutus-script-cost offline` on a mainnet-shaped registration: the mainnet validator accepts it with the same execution units as the preprod validator (80,108 memory, 28,929,016 steps), so the registration takes the same path; it rejects a datum naming another stake key | Passed |
 | Hot page in headless Chromium against preprod (scratch folder, throwaway sponsor key, test mnemonic, never submitted): datum received as QR frames, registration built and checked, 14 QR frames shown, witness received, assembled with the same txid; wrong confirmations and a txid not matching the assembled transaction refused; self-send built for the preprod cold wallet and its checks pass | Passed |
 | Hot server refuses requests without the token, from another Origin, with another Host (DNS rebinding), and writes only its four input files | Passed |
+| `hot/sweep-address.sh`: against a **stub** cardano-cli, a build missing a token, a destination on another network, at a script address or equal to the source, a key that is not the source's and an empty source are refused; run by hand, every UTxO at the source went to the destination and the source address was left empty | Passed |
 | Hot page *Clear and start over* against a **stub** cardano-cli: the received and built files are renamed to `*.old`, the sponsor's files stay, the page reloads empty with its token, and a request without the token is refused | Passed |
 | Hot page submission and landing watch | Passed (run by hand on preprod and mainnet) |
 | A cNIGHT self-send on preprod: both cNIGHT UTxOs spent, all cNIGHT in one new UTxO at the cold address, cold wallet paid the 0.17 ADA fee | Passed |
