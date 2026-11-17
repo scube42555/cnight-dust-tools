@@ -13,7 +13,7 @@ use bip39::Mnemonic;
 use blake2::{digest::{Update, VariableOutput}, Blake2bVar};
 use ed25519_bip32::{DerivationScheme as Scheme, Signature, XPrv as EdXPrv};
 use midnight_ledger::dust::{DustPublicKey, DustSecretKey};
-use midnight_serialize::Serializable;
+use midnight_serialize::{Deserializable, Serializable};
 use std::str::FromStr;
 use wasm_bindgen::prelude::*;
 
@@ -199,6 +199,33 @@ pub fn sign_with_payment_key(phrase: &str, passphrase: &str, account: u32, payme
         return Err(err("The signature did not verify; nothing was produced"));
     }
     Ok(obj(&[("vkey", hex(&xpub.public_key())), ("signature", hex(sig.as_ref()))]))
+}
+
+/// Decode a Midnight Dust address typed on the page (to register a Dust key other than this wallet's own).
+/// JSON {hrp, dustPublicKey}. Refuses anything that is not bech32m, not a Dust address of `network`
+/// ("mainnet", "preprod", "preview"), or whose bytes are not a Dust public key in its canonical encoding.
+#[wasm_bindgen]
+pub fn dust_address_decode(address: &str, network: &str) -> Result<String, JsError> {
+    let (hrp, data, variant) = bech32::decode(address.trim()).map_err(|e| err(format!("Not a Dust address: {e}")))?;
+    if variant != Variant::Bech32m {
+        return Err(err("Not a Dust address: it is bech32, and Midnight addresses are bech32m"));
+    }
+    let want = if network == "mainnet" { "mn_dust".to_string() } else { format!("mn_dust_{network}") };
+    if hrp != want {
+        return Err(err(format!("This address starts with \"{hrp}\"; a Dust address for this network starts with \"{want}\"")));
+    }
+    let bytes = Vec::<u8>::from_base32(&data).map_err(|e| err(e.to_string()))?;
+    if bytes.is_empty() || bytes.len() > 33 {
+        return Err(err("Not a Dust address: the key must be 1 to 33 bytes"));
+    }
+    let pk = <DustPublicKey as Deserializable>::deserialize(&mut &bytes[..], 0)
+        .map_err(|e| err(format!("Not a Dust address: the key does not decode ({e})")))?;
+    let mut canonical = Vec::new();
+    pk.serialize(&mut canonical).map_err(|e| err(e.to_string()))?;
+    if canonical != bytes {
+        return Err(err("Not a Dust address: the key is not in its canonical encoding"));
+    }
+    Ok(obj(&[("hrp", hrp), ("dustPublicKey", hex(&bytes))]))
 }
 
 /// BLAKE2b with an output of `len` bytes (28 for key and script hashes, 32 for a transaction body hash).

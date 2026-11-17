@@ -17,6 +17,9 @@ datum-*.json
 register-send.html
 sponsor-utxos.json
 register-signed-tx.hash
+deregister-signed-tx.hash
+deregister-send.html
+validator-utxos.json
 collateral-*
 register-*.tx
 move-cnight-send.html
@@ -30,3 +33,7 @@ protocol-params.json
 # Local wallet folders and their files
 preprod-test/
 mainnet/
+prepare-sponsor-tx.hash
+
+# Private test log (transaction ids, addresses, dates)
+TEST-LOG.md

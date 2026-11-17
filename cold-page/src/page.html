@@ -94,6 +94,9 @@ video { width: 100%; max-width: 420px; border-radius: 6px; background: #000; }
       address. Either send cNIGHT to your address (step 2) from another wallet, with nothing to sign here, or do a
       self-send signed by your <strong>payment key</strong>; the page signs that only if every output comes back to your own address.</li>
   </ol>
+  <p class="sub">It also signs a <strong>deregistration</strong> (stake key), which removes a registration. To
+    <strong>change the Dust address</strong>: deregister, register again with the new Dust address (step 1 has a field
+    for it), then move the cNIGHT again. Never hold two registrations at once: Midnight then generates no DUST.</p>
   <div id="online" class="banner info" hidden>Reminder: make sure this machine is offline (cable unplugged, Wi-Fi and Bluetooth off). The browser reports a network link, but browsers say that whenever any network adapter is up, so it cannot tell whether the machine can actually reach the internet.</div>
   <div id="loading" class="banner info">Loading the key module…</div>
   <div id="fatal" class="banner err" hidden></div>
@@ -111,6 +114,8 @@ video { width: 100%; max-width: 420px; border-radius: 6px; background: #000; }
       <div><label for="index">Stake key index <span class="hint">(usually 0)</span></label><input id="index" type="number" min="0" value="0"></div>
       <div><label for="payIndex">Address index <span class="hint">(holding the cNIGHT; usually 0)</span></label><input id="payIndex" type="number" min="0" value="0"></div>
     </div>
+    <label for="dustAddr">Dust address that receives the DUST <span class="hint">(optional; leave empty to use this wallet's own Dust address. Fill it in to register, or re-register, another Midnight Dust address)</span></label>
+    <input id="dustAddr" type="text" spellcheck="false" autocomplete="off" autocapitalize="off">
     <div id="validatorRow" hidden>
       <label for="validator">Mapping validator hash for this network <span class="hint">(preprod is filled in; to use another, paste its 56-character hash, or load or drop here its .plutus file or a .mqr of it)</span></label>
       <div class="row"><div style="flex:1"><input id="validator" type="text" spellcheck="false"></div>
@@ -128,19 +133,24 @@ video { width: 100%; max-width: 420px; border-radius: 6px; background: #000; }
         <dt>Cardano address</dt><dd id="kBase"></dd>
         <dt>Stake address</dt><dd id="kStake"></dd>
         <dt>Stake key hash</dt><dd id="kHash"></dd>
-        <dt>Midnight Dust address</dt><dd id="kDust"></dd>
+        <dt>This wallet's Dust address</dt><dd id="kOwnDust"></dd>
+        <dt>DUST will go to</dt><dd id="kDust"></dd>
         <dt>Dust public key</dt><dd id="kDustPk"></dd>
         <dt>Mapping validator</dt><dd id="kValidator"></dd>
         <dt>cNIGHT policy</dt><dd id="kCnight"></dd>
       </dl>
+      <div id="dustWarn" class="banner err" hidden>The registration will send DUST to the Dust address you entered, which is
+        <strong>not</strong> derived from this recovery phrase. This page cannot tell whose it is. Compare every character
+        with the Midnight wallet that should receive the DUST: DUST sent to a wrong address is lost to you.</div>
     </div>
   </section>
 
   <section id="s2" class="locked">
     <h2><span class="n">2</span>Send public data to the hot machine</h2>
-    <h3>For the registration: the datum</h3>
-    <p>The hot machine builds the registration around this datum. It holds only public data: your stake key hash and Dust public key.
-      Save it as <span class="mono">datum.json</span> for <span class="mono">hot/build-register.sh</span>.</p>
+    <h3>For the registration or deregistration: the datum</h3>
+    <p>The hot machine builds the registration around this datum. It holds only public data: your stake key hash and the Dust public key shown above.
+      Save it as <span class="mono">datum.json</span> for <span class="mono">hot/build-register.sh</span>.
+      <span class="mono">hot/build-deregister.sh</span> takes the same file and uses only the stake key hash, to find your registration.</p>
     <pre id="datum"></pre>
     <div class="actions">
       <button id="datumQr" type="button" disabled>Show as QR</button>
@@ -161,9 +171,10 @@ video { width: 100%; max-width: 420px; border-radius: 6px; background: #000; }
 
   <section id="s3" class="locked">
     <h2><span class="n">3</span>Receive the unsigned transaction</h2>
-    <p>On the hot machine, <span class="mono">hot/build-register.sh</span> writes <span class="mono">register.unsigned</span>, and
-      <span class="mono">hot/build-move-cnight.sh</span> writes <span class="mono">move-cnight.unsigned</span>; both show it as QR codes.
-      The page tells the two apart and checks each with its own rules. Bring it here in one of three ways:</p>
+    <p>On the hot machine, <span class="mono">hot/build-register.sh</span> writes <span class="mono">register.unsigned</span>,
+      <span class="mono">hot/build-deregister.sh</span> writes <span class="mono">deregister.unsigned</span>, and
+      <span class="mono">hot/build-move-cnight.sh</span> writes <span class="mono">move-cnight.unsigned</span>; each is shown as QR codes.
+      The page tells them apart and checks each with its own rules. Bring it here in one of three ways:</p>
     <ul>
       <li><strong>Python scanner</strong> (when the browser cannot use the camera, e.g. on Tails): run
         <span class="mono">python3 tools/qr_scan.py</span> from midnight-cold-hot, then drop the <span class="mono">received-tx-*.mqr</span> file on this page.

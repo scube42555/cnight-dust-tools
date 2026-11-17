@@ -6,8 +6,8 @@
 
 Open the URL it prints (it carries a one-time token after the #). The page receives the datum, cold address and
 witnesses from the cold page (camera, dropped file or paste), shows the transactions as QR codes, and submits after
-you type SUBMIT. All the Cardano work is done by the scripts in hot/ (build-register.sh, assemble-submit.sh,
-build-move-cnight.sh, submit-move-cnight.sh), run with fixed arguments in --dir, the folder that holds payment.addr
+you type SUBMIT. All the Cardano work is done by the scripts in hot/ (build-register.sh, build-deregister.sh,
+assemble-submit.sh, build-move-cnight.sh, submit-move-cnight.sh), run with fixed arguments in --dir, the folder that holds payment.addr
 and payment.skey. This server never reads payment.skey; it only passes its path to the scripts.
 
 Only 127.0.0.1 can connect. Every API call needs the token, and requests whose Host or Origin is not this server are
@@ -34,10 +34,14 @@ MAINNET_VALIDATOR = "73e4aea31b5b51d9b0ca386196fc6a4c422f74c5aea011e4b8bdf4e5"
 TXID_RE = re.compile(r"[0-9a-f]{64}")
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")  # colour codes in cardano-cli output
 WITNESS_RE = re.compile(r"8200825820[0-9a-f]{64}5840[0-9a-f]{128}")
+UTXO_RE = re.compile(r"[0-9a-f]{64}#[0-9]{1,4}")
 
 KINDS = {
     "register": {"unsigned": "register.unsigned", "signed": "register.signed", "witness": "cold-stake.witness",
                  "build": "build-register.sh", "submit": "assemble-submit.sh", "hash": "register-signed-tx.hash"},
+    "deregister": {"unsigned": "deregister.unsigned", "signed": "deregister.signed",
+                   "witness": "cold-stake-deregister.witness", "build": "build-deregister.sh",
+                   "submit": "assemble-submit.sh", "hash": "deregister-signed-tx.hash"},
     "selfsend": {"unsigned": "move-cnight.unsigned", "signed": "move-cnight.signed", "witness": "cold-payment.witness",
                  "build": "build-move-cnight.sh", "submit": "submit-move-cnight.sh", "hash": "move-cnight-tx.hash"},
 }
@@ -156,7 +160,7 @@ class Hot:
         try:
             if name == "datum.json":
                 out = check_datum(text)
-            elif name in ("cold-stake.witness", "cold-payment.witness"):
+            elif name in ("cold-stake.witness", "cold-stake-deregister.witness", "cold-payment.witness"):
                 out = check_witness(text)
             elif name == "cold.addr":
                 a = text.strip()
@@ -185,8 +189,9 @@ class Hot:
         for ref, v in u.items():
             try:
                 d = v["inlineDatum"]
-                if d["fields"][0]["fields"][0]["bytes"] == stake:
-                    hits.append({"utxo": ref, "dustPublicKey": d["fields"][1]["bytes"]})
+                if d["fields"][0]["fields"][0]["bytes"] == stake and v["value"].get(self.validator_hash) == {"": 1}:
+                    hits.append({"utxo": ref, "dustPublicKey": d["fields"][1]["bytes"],
+                                 "lovelace": v["value"]["lovelace"]})
             except (KeyError, IndexError, TypeError):
                 continue
         return {"total": len(u), "hits": hits}
@@ -194,7 +199,10 @@ class Hot:
     def build(self, body):
         kind = body.get("kind")
         k = KINDS.get(kind) or self._refuse("Unknown transaction kind.")
-        need = ["payment.addr", "datum.json"] if kind == "register" else ["cold.addr"]
+        need = ["cold.addr"] if kind == "selfsend" else ["payment.addr", "datum.json"]
+        utxo = body.get("utxo") or ""
+        if kind == "deregister" and utxo and not UTXO_RE.fullmatch(utxo):
+            raise Refuse("Bad registration UTxO.")
         if kind == "selfsend" and body.get("gift"):
             need.append("payment.addr")
         for n in need:
@@ -205,6 +213,8 @@ class Hot:
                 os.replace(self.path(n), self.path(n + ".old"))
         if kind == "register":
             rc, log = self.script(k["build"], ["datum.json", "payment.addr"])
+        elif kind == "deregister":
+            rc, log = self.script(k["build"], ["datum.json", "payment.addr", utxo])
         else:
             self.gift = bool(body.get("gift"))
             rc, log = self.script(k["build"], ["cold.addr"] + (["payment.addr"] if self.gift else []))
@@ -214,7 +224,7 @@ class Hot:
 
     def _submit_args(self, kind):
         k = KINDS[kind]
-        if kind == "register":
+        if kind in ("register", "deregister"):
             return [k["witness"], "payment.skey", "datum.json", k["unsigned"]]
         return [k["witness"], "cold.addr", "payment.skey" if self.gift else "", k["unsigned"]]
 

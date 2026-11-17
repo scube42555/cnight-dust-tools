@@ -1,4 +1,4 @@
-// Pure logic for the cold page: CBOR decoding, the registration transaction checks, MQR1 frames, SHA-256.
+// Pure logic for the cold page: CBOR decoding, the registration, deregistration and self-send checks, MQR1 frames, SHA-256.
 // No DOM, no network, no WASM: tests/coldtx.test.cjs loads this file in Node with fake inputs.
 // Everything handed to these functions came across the air gap and is treated as hostile.
 (function (root) {
@@ -649,12 +649,35 @@
       if (dust.length / 2 > 33) throw new Error('the Dust public key is longer than 33 bytes');
       if (hash === expect.stakeKeyHash) out.push({ level: 'ok', text: 'The datum names your stake key hash.' });
       else out.push({ level: 'error', text: `The datum names stake key hash ${hash}, not yours. Do not sign.` });
-      if (dust === expect.dustPublicKey) out.push({ level: 'ok', text: 'The datum names your Dust public key (DUST will go to your Midnight wallet).' });
-      else out.push({ level: 'error', text: `The datum names Dust public key ${dust}, not yours: DUST would go to someone else. Do not sign.` });
+      const chosen = !!expect.dustCustom; // the Dust key was entered on the page, not derived from the recovery phrase
+      if (dust === expect.dustPublicKey) {
+        out.push({ level: 'ok', text: chosen ? 'The datum names the Dust public key of the Dust address you entered in step 1.'
+          : 'The datum names your Dust public key (DUST will go to your Midnight wallet).' });
+      } else {
+        out.push({ level: 'error', text: `The datum names Dust public key ${dust}, not ${chosen ? 'the one you entered' : 'yours'}: DUST would go to someone else. Do not sign.` });
+      }
     } catch (e) {
       out.push({ level: 'error', text: `The inline datum is not a valid registration datum: ${e.message}.` });
     }
     return out;
+  }
+
+  /** Redeemers, as a Conway map {[tag, index]: [data, units]} or the older list [[tag, index, data, units]]. Tag 0 = spend, 1 = mint. */
+  function readRedeemers(r) {
+    const reds = [];
+    if (r.t === 'map') {
+      for (const [k, v] of r.entries) {
+        const ka = asArray(k, 'A redeemer key');
+        const va = asArray(v, 'A redeemer value');
+        reds.push({ tag: Number(asUint(ka[0], 'Redeemer tag')), index: Number(asUint(ka[1], 'Redeemer index')), data: va[0] });
+      }
+    } else {
+      for (const e of asArray(r, 'Redeemers')) {
+        const a = asArray(e, 'A redeemer');
+        reds.push({ tag: Number(asUint(a[0], 'Redeemer tag')), index: Number(asUint(a[1], 'Redeemer index')), data: a[2] });
+      }
+    }
+    return reds;
   }
 
   function inspectWitnesses(wits, expect, crypto, checks, summary) {
@@ -671,20 +694,7 @@
     }
     if (w.has(3) || w.has(6)) checks.push({ level: 'warn', text: 'The transaction includes Plutus V1/V2 scripts; a registration uses only V3.' });
     if (w.has(5)) {
-      const reds = [];
-      const r = w.get(5);
-      if (r.t === 'map') {
-        for (const [k, v] of r.entries) {
-          const ka = asArray(k, 'A redeemer key');
-          const va = asArray(v, 'A redeemer value');
-          reds.push({ tag: Number(asUint(ka[0], 'Redeemer tag')), index: Number(asUint(ka[1], 'Redeemer index')), data: va[0] });
-        }
-      } else {
-        for (const e of asArray(r, 'Redeemers')) {
-          const a = asArray(e, 'A redeemer');
-          reds.push({ tag: Number(asUint(a[0], 'Redeemer tag')), index: Number(asUint(a[1], 'Redeemer index')), data: a[2] });
-        }
-      }
+      const reds = readRedeemers(w.get(5));
       summary.redeemers = reds.length;
       const mint = reds.filter((x) => x.tag === 1);
       const other = reds.filter((x) => x.tag !== 1);
@@ -701,6 +711,174 @@
       summary.existingWitnesses = vk.map((k) => crypto.blake2b(k, 28));
       checks.push({ level: 'info', text: `The transaction already carries ${vk.length} signature(s). The hot machine adds them when it assembles; this is fine.` });
     }
+  }
+
+  // ------------------------------------------------------------------ the deregistration checks
+  //
+  // A deregistration spends the registration UTxO at the mapping validator and burns its token; the validator wants
+  // the stake key named in that UTxO's datum as a required signer. To change the Dust address, deregister, then
+  // register again with the new Dust key (the validator has no "update"), and move the cNIGHT again.
+  //
+  // Offline, the page cannot see which UTxO is spent. That is safe here: with no certificates, withdrawals or votes,
+  // the stake-key signature is only read by the validator, which accepts it only for a registration of this stake
+  // key. So the most this signature can do is remove a registration of yours, which is what you are asking for.
+  // Nothing may go back to the validator and nothing may be minted, so no registration can be created or replaced.
+
+  /**
+   * expect: {networkId: 0|1, validatorHash, stakeKeyHash} (lowercase hex)
+   * Returns {ok, bodyHash, checks, summary} like checkRegistration.
+   */
+  function checkDeregistration(bytes, expect, crypto) {
+    const checks = [];
+    const ok = (text) => checks.push({ level: 'ok', text });
+    const error = (text) => checks.push({ level: 'error', text });
+    const warn = (text) => checks.push({ level: 'warn', text });
+    const info = (text) => checks.push({ level: 'info', text });
+    const summary = { kind: 'deregister', inputs: [], collateral: [], referenceInputs: [], outputs: [], requiredSigners: [], mint: [] };
+    let bodyHash = null;
+
+    try {
+      for (const k of ['validatorHash', 'stakeKeyHash']) if (!/^[0-9a-f]{56}$/.test(expect[k] || '')) throw new Error(`Internal: ${k} not set.`);
+
+      const top = decodeCbor(bytes);
+      let body, wits = null, isValid = true;
+      if (top.t === 'array') {
+        if (top.items.length !== 4) throw new Error(`A transaction is a list of 4 parts; this one has ${top.items.length}.`);
+        [body, wits] = top.items;
+        const v = top.items[2];
+        if (v.t !== 'simple' || typeof v.v !== 'boolean') throw new Error('The transaction validity flag is not true/false.');
+        isValid = v.v;
+        if (!(top.items[3].t === 'simple' && top.items[3].v === null)) summary.hasMetadata = true;
+      } else if (top.t === 'map') {
+        body = top;
+        info('This is a transaction body only (no witness set). The signature covers the body, so this is enough to sign.');
+      } else {
+        throw new Error('This is not a Cardano transaction (expected a list or a map at the top level).');
+      }
+
+      bodyHash = crypto.blake2b(toHex(bytes.slice(body.s, body.e)), 32);
+      summary.bodyHash = bodyHash;
+      const b = mapByUint(body, 'The transaction body');
+
+      for (const k of b.keys()) {
+        if (FORBIDDEN_KEYS[k]) error(`The transaction contains ${FORBIDDEN_KEYS[k]}. A deregistration never needs this. Do not sign.`);
+        else if (!BODY_KEYS[k]) error(`The transaction body has unknown field ${k}. Do not sign.`);
+      }
+      if (!isValid) error('The transaction is marked invalid (it would only take collateral). Do not sign.');
+
+      if (!b.has(0)) error('The transaction has no inputs.');
+      else {
+        summary.inputs = parseInputs(b.get(0), 'Inputs');
+        if (summary.inputs.length < 2) error('A deregistration spends the registration UTxO and at least one sponsor UTxO; this transaction has fewer than two inputs.');
+      }
+      if (b.has(13)) summary.collateral = parseInputs(b.get(13), 'Collateral inputs');
+      else error('There is no collateral input; a transaction that runs a script needs one.');
+      if (b.has(18)) summary.referenceInputs = parseInputs(b.get(18), 'Reference inputs');
+
+      if (!b.has(2)) error('The transaction has no fee.');
+      else {
+        summary.fee = asUint(b.get(2), 'The fee');
+        if (summary.fee > FEE_WARN) warn(`The fee is ${lovelaceText(summary.fee)}, more than expected (about 0.5 to 1 ADA). The sponsor pays it.`);
+      }
+      if (b.has(3)) summary.ttl = asUint(b.get(3), 'The TTL');
+      else warn('The transaction has no expiry slot (TTL), so it stays valid until its inputs are spent.');
+      if (b.has(8)) summary.validFrom = asUint(b.get(8), 'The validity start');
+      if (b.has(15)) {
+        const nid = Number(asUint(b.get(15), 'The network id'));
+        if (nid !== expect.networkId) error(`The transaction is for network id ${nid}, but this page is set to ${expect.networkId}.`);
+      }
+      if (b.has(16)) summary.collateralReturn = parseOutput(b.get(16), 'The collateral return', crypto.bech32);
+      if (b.has(17)) summary.totalCollateral = asUint(b.get(17), 'The total collateral');
+      if (b.has(7)) warn('The transaction carries metadata (auxiliary data). A deregistration does not need it; review it if you did not expect it.');
+      if (!b.has(11)) error('There is no script data hash; the validator could not run.');
+
+      if (!b.has(14)) error('The transaction does not list any required signer, so the validator would reject it.');
+      else {
+        summary.requiredSigners = asArray(b.get(14), 'Required signers').map((n) => toHex(asBytes(n, 'A required signer', 28)));
+        if (summary.requiredSigners.includes(expect.stakeKeyHash)) ok('Your stake key hash is listed as a required signer.');
+        else error('Your stake key hash is not a required signer. This transaction is not a deregistration for your key.');
+      }
+
+      // Mint: exactly one registration token burned, nothing else minted or burned.
+      if (!b.has(9)) error('Nothing is burned. A deregistration burns exactly one registration token.');
+      else {
+        summary.mint = parseMultiAsset(b.get(9), 'The mint', true);
+        const m = summary.mint;
+        if (m.length === 1 && m[0].policy === expect.validatorHash && m[0].name === '' && m[0].amount === -1n) {
+          ok('Burns exactly 1 registration token of the mapping validator, and mints nothing.');
+        } else {
+          error('The mint field is not exactly one burned registration token of the mapping validator. Do not sign.');
+        }
+      }
+
+      // Outputs: nothing may go back to the validator or carry a registration token, so no registration is (re)created.
+      const outs = b.has(1) ? asArray(b.get(1), 'Outputs') : [];
+      if (outs.length === 0) error('The transaction has no outputs.');
+      summary.outputs = outs.map((o, i) => parseOutput(o, `Output ${i}`, crypto.bech32));
+      let clean = summary.outputs.length > 0;
+      const allOuts = summary.outputs.map((o, i) => [o, `Output ${i}`]).concat(summary.collateralReturn ? [[summary.collateralReturn, 'The collateral return']] : []);
+      for (const [o, what] of allOuts) {
+        if (o.address.network !== -1 && o.address.network !== expect.networkId) error(`An output address is for another network: ${o.address.text}`);
+        if (o.address.payment && o.address.payment.hash === expect.validatorHash) {
+          clean = false;
+          error(`${what} goes to the mapping validator. A deregistration leaves nothing there. Do not sign.`);
+        }
+        if (o.value.assets.some((x) => x.policy === expect.validatorHash)) {
+          clean = false;
+          error(`${what} holds a registration token. A deregistration burns it. Do not sign.`);
+        }
+      }
+      if (clean) ok('No output goes to the mapping validator or holds a registration token: no registration is created or replaced.');
+      summary.outputs.forEach((o, i) => {
+        if (o.datum || o.datumHash) warn(`Output ${i} carries a datum, which a deregistration does not need.`);
+        if (o.scriptRef) warn(`Output ${i} carries a reference script, which a deregistration does not need.`);
+      });
+
+      // Witness set: the validator, and exactly the two redeemers a deregistration has.
+      if (wits) {
+        const w = mapByUint(wits, 'The witness set');
+        summary.scriptFound = false;
+        if (w.has(7)) {
+          for (const s of asArray(w.get(7), 'Plutus V3 scripts')) {
+            const h = crypto.blake2b('03' + toHex(asBytes(s, 'A Plutus V3 script')), 28);
+            if (h === expect.validatorHash) summary.scriptFound = true;
+            else error(`The transaction includes another Plutus V3 script (hash ${h}). Do not sign.`);
+          }
+          if (summary.scriptFound) ok('The mapping validator script is included, and its hash matches.');
+        }
+        if (w.has(1) || w.has(3) || w.has(6)) error('The transaction includes native or Plutus V1/V2 scripts; a deregistration uses only the mapping validator. Do not sign.');
+        if (w.has(5)) {
+          const reds = readRedeemers(w.get(5));
+          summary.redeemers = reds.length;
+          const mint = reds.filter((x) => x.tag === 1);
+          const spend = reds.filter((x) => x.tag === 0);
+          if (reds.length !== mint.length + spend.length) error('The transaction runs a script for something other than spending and burning (a certificate, withdrawal or vote). Do not sign.');
+          const c = mint.length === 1 ? plutusConstr(mint[0].data) : undefined;
+          if (c && c.index === 1 && c.fields.length === 0) ok('The mint redeemer is "deregister" (Constr 1 []).');
+          else error('The mint redeemer is not the deregister redeemer (Constr 1 []). Do not sign.');
+          if (spend.length === 1) ok('One script input is spent: the registration UTxO.');
+          else error(`A deregistration spends exactly one script input (the registration UTxO); this transaction spends ${spend.length}. Do not sign.`);
+        } else {
+          error('The transaction has no redeemer, so the validator cannot run.');
+        }
+        if (w.has(0)) {
+          const vk = asArray(w.get(0), 'Key witnesses').map((x) => toHex(asBytes(asArray(x, 'A key witness')[0], 'A witness key', 32)));
+          summary.existingWitnesses = vk.map((k) => crypto.blake2b(k, 28));
+          info(`The transaction already carries ${vk.length} signature(s). The hot machine adds them when it assembles; this is fine.`);
+        }
+        if (summary.scriptFound === false && summary.referenceInputs.length === 0) {
+          error('The mapping validator script is neither in the transaction nor in a reference input.');
+        } else if (summary.scriptFound === false) {
+          info('The validator script is expected to come from a reference input (not checkable offline).');
+        }
+      }
+      info('This page cannot see which registration the inputs spend (that needs the chain). Your stake-key signature can remove only a registration of your own stake key; if you have more than one, check on the hot machine which one is spent.');
+      info('DUST keeps being generated for cNIGHT that has not moved since. Move the cNIGHT (a self-send) after this is on chain to stop it, or after registering again to send DUST to the new address.');
+    } catch (e) {
+      error(`Could not read the transaction: ${e.message}`);
+    }
+
+    return { ok: !checks.some((c) => c.level === 'error') && bodyHash !== null, bodyHash, checks, summary };
   }
 
   // ------------------------------------------------------------------ the cNIGHT self-send checks
@@ -724,12 +902,21 @@
   const SELFSEND_FEE_MAX = 2000000n;
   const SELFSEND_FEE_WARN = 1000000n;
 
-  /** 'register' if the transaction mints (only a registration does), otherwise 'selfsend'. Unreadable -> 'register' (its checks report why). */
+  /**
+   * 'selfsend' if nothing is minted; 'deregister' if the mint field burns something (only a deregistration does);
+   * otherwise 'register'. Unreadable -> 'register' (its checks report why). Each kind's checks are complete on their
+   * own, so a wrong guess here can only lead to a refusal.
+   */
   function txKind(bytes) {
     try {
       const top = decodeCbor(bytes);
       const body = top.t === 'array' ? top.items[0] : top;
-      return mapByUint(body, 'The transaction body').has(9) ? 'register' : 'selfsend';
+      const b = mapByUint(body, 'The transaction body');
+      if (!b.has(9)) return 'selfsend';
+      try {
+        if (parseMultiAsset(b.get(9), 'The mint', true).some((a) => a.amount < 0n)) return 'deregister';
+      } catch (_) { /* a malformed mint is reported by the registration checks */ }
+      return 'register';
     } catch (_) {
       return 'register';
     }
@@ -873,7 +1060,7 @@
     toHex, fromHex, sha256, b64urlEncode, b64urlDecode,
     MQR, parseFrame, encodeFrames, decodeFrames, makeZlib,
     decodeCbor, readTxText, checkRegistration, checkDatum, describeAddress, lovelaceText,
-    txKind, checkSelfSend, baseAddressHex,
+    txKind, checkSelfSend, checkDeregistration, baseAddressHex,
     datumJson, witnessEnvelope,
   };
 })(typeof module !== 'undefined' && module.exports ? module.exports : window);

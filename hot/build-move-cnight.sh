@@ -10,6 +10,8 @@
 #               With it, one small ADA-only sponsor UTxO is added as an input. Its whole value goes to the cold wallet
 #               (the cold page signs only if every output goes back to the cold address), so it is a gift that covers
 #               the fee. The smallest ADA-only UTxO of at least 1 ADA is used, up to GIFT_MAX_ADA (default 5).
+#               The gift is required when the ADA on the cNIGHT UTxOs cannot cover the fee and still leave the
+#               ledger's minimum ADA for the output (about 1.2 ADA); the script says so and stops.
 #
 # Writes move-cnight.unsigned and, if midnight-cold-hot is next to this repository, move-cnight-send.html.
 # The cold machine signs with the payment key; hot/submit-move-cnight.sh finishes the job.
@@ -64,10 +66,43 @@ if not picked:
     sys.exit("The cold address holds no cNIGHT of this policy. Check the address index on the cold page, or CNIGHT_POLICY.")
 total = sum(sum(u[k]["value"][policy].values()) for k in picked)
 print(f"{len(picked)} cNIGHT UTxO(s), {total} unit(s) in all", file=sys.stderr)
+# Line 1: the ADA on these UTxOs. Line 2: all their tokens, as the token part of an output value. Then the UTxOs.
+tokens = {}
+for k in picked:
+    for p, assets in u[k]["value"].items():
+        if p != "lovelace":
+            for name, n in assets.items():
+                tokens[(p, name)] = tokens.get((p, name), 0) + n
+print(sum(u[k]["value"]["lovelace"] for k in picked))
+print(" + ".join(f"{n} {p}.{name}" if name else f"{n} {p}" for (p, name), n in sorted(tokens.items())))
 print("\n".join(picked))
 EOF
 )"
 mapfile -t COLD_IN <<< "$PICKED"
+COLD_LOVELACE="${COLD_IN[0]}"
+COLD_TOKENS="${COLD_IN[1]}"
+COLD_IN=("${COLD_IN[@]:2}")
+
+# The single output carries every token, so the ledger sets a minimum ADA for it. Is the cold wallet's ADA enough
+# for that and the fee? 0.25 ADA is allowed for the fee; the real one is about 0.2.
+ada() { python3 -I -c 'import sys; print(f"{int(sys.argv[1]) / 1e6:.6f}")' "$1"; }
+"$CLI" conway query protocol-parameters --socket-path "$SOCKET_PATH" --out-file protocol-params.json
+MIN_OUT="$("$CLI" conway transaction calculate-min-required-utxo --protocol-params-file protocol-params.json \
+  --tx-out "$COLD_ADDR+0 + $COLD_TOKENS" | tr -dc '0-9')"
+[[ "$MIN_OUT" =~ ^[0-9]+$ ]] || { echo "Could not work out the minimum ADA of the output. Stopping." >&2; exit 1; }
+SHORT=$((MIN_OUT + 250000 - COLD_LOVELACE))
+(( SHORT < 0 )) && SHORT=0
+echo "ADA on the cNIGHT UTxOs: $(ada "$COLD_LOVELACE"); the output must keep at least $(ada "$MIN_OUT")"
+if (( SHORT > 0 )) && [[ -z "$SPONSOR_ADDR" ]]; then
+  {
+    echo "The cold wallet cannot pay the fee itself: its cNIGHT UTxOs hold $(ada "$COLD_LOVELACE") ADA, and after a fee of about"
+    echo "0.2 ADA the output must still keep $(ada "$MIN_OUT") ADA (the ledger minimum for an output with these tokens)."
+    echo "==> A sponsor gift is required: the cold wallet is about $(ada "$SHORT") ADA short of paying the fee itself."
+    echo "==> On the hot page, tick \"Add a sponsor gift UTxO to pay the fee\" and build again."
+    echo "==> On the command line, add the sponsor's address file: hot/build-move-cnight.sh <cold.addr> <sponsor-payment.addr>"
+  } >&2
+  exit 1
+fi
 
 TX_IN=()
 for i in "${COLD_IN[@]}"; do TX_IN+=(--tx-in "$i"); done
@@ -76,14 +111,16 @@ WITNESSES=1
 if [[ -n "$SPONSOR_ADDR" ]]; then
   if [[ -z "${SPONSOR_UTXO:-}" ]]; then
     "$CLI" conway query utxo --address "$SPONSOR_ADDR" --socket-path "$SOCKET_PATH" --output-json > sponsor-utxos.json
-    SPONSOR_UTXO="$(python3 -I - sponsor-utxos.json "$GIFT_MAX_ADA" <<'EOF'
+    SPONSOR_UTXO="$(python3 -I - sponsor-utxos.json "$GIFT_MAX_ADA" "$SHORT" <<'EOF'
 import json, sys
 u, cap = json.load(open(sys.argv[1])), int(float(sys.argv[2]) * 1_000_000)
+# At least 1 ADA, and enough to cover what the cold wallet is short of.
+least = max(1_000_000, int(sys.argv[3]))
 ada = sorted((v["value"]["lovelace"], k) for k, v in u.items()
              if set(v["value"]) == {"lovelace"} and not v.get("inlineDatum") and not v.get("datumhash")
-             and not v.get("referenceScript") and v["value"]["lovelace"] >= 1_000_000)
+             and not v.get("referenceScript") and v["value"]["lovelace"] >= least)
 if not ada:
-    sys.exit("The sponsor has no ADA-only UTxO of at least 1 ADA.")
+    sys.exit(f"The sponsor has no ADA-only UTxO of at least {least / 1e6} ADA.")
 if ada[0][0] > cap:
     sys.exit(f"The sponsor's smallest ADA-only UTxO is {ada[0][0] / 1e6} ADA, more than GIFT_MAX_ADA={cap / 1e6}. "
              "Its whole value would go to the cold wallet. Send the sponsor a 2 ADA output first, or set SPONSOR_UTXO.")

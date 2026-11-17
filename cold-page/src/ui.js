@@ -102,7 +102,7 @@
     if (net === 'preprod') { $('validator').value = PREPROD_VALIDATOR; $('cnight').value = PREPROD_CNIGHT; }
     resetFrom(1);
   });
-  for (const id of ['phrase', 'pass', 'account', 'index', 'payIndex', 'validator', 'cnight']) $(id).addEventListener('input', () => resetFrom(1));
+  for (const id of ['phrase', 'pass', 'account', 'index', 'payIndex', 'validator', 'cnight', 'dustAddr']) $(id).addEventListener('input', () => resetFrom(1));
 
   $('plutusBtn').addEventListener('click', () => $('plutusFile').click());
   $('plutusFile').addEventListener('change', () => {
@@ -154,6 +154,16 @@
       const p = JSON.parse(W.payment_key($('phrase').value, $('pass').value, account, payIndex));
       const networkId = network === 'mainnet' ? 1 : 0;
       keys = Object.assign(k, p, { network, account, index, payIndex, validatorHash, cnightPolicy, networkId });
+      // The Dust key to register: this wallet's own, unless another Dust address was entered.
+      keys.ownDustAddress = k.dustAddress;
+      keys.ownDustPublicKey = k.dustPublicKey;
+      const entered = $('dustAddr').value.trim();
+      if (entered) {
+        const d = JSON.parse(W.dust_address_decode(entered, network));
+        keys.dustAddress = entered.toLowerCase();
+        keys.dustPublicKey = d.dustPublicKey;
+      }
+      keys.dustCustom = keys.dustPublicKey !== keys.ownDustPublicKey;
       keys.ownAddress = W.bech32_encode(networkId ? 'addr' : 'addr_test', C.baseAddressHex(networkId, keys.paymentKeyHash, keys.stakeKeyHash));
     } catch (e) {
       setErr('keysErr', e.message || String(e));
@@ -162,7 +172,9 @@
     $('kBase').textContent = `${keys.ownAddress}   payment ${keys.paymentPath}, stake ${keys.stakePath}`;
     $('kStake').textContent = `${keys.stakeAddress}   ${keys.stakePath}`;
     $('kHash').textContent = keys.stakeKeyHash;
-    $('kDust').textContent = `${keys.dustAddress}   ${keys.dustPath}`;
+    $('kOwnDust').textContent = `${keys.ownDustAddress}   ${keys.dustPath}`;
+    $('kDust').textContent = keys.dustCustom ? `${keys.dustAddress}   (entered by you; not from this recovery phrase)` : `${keys.dustAddress}   (this wallet's own)`;
+    show($('dustWarn'), keys.dustCustom);
     $('kDustPk').textContent = `${keys.dustPublicKey} (${keys.dustPublicKey.length / 2} bytes)`;
     $('kValidator').textContent = `${W.bech32_encode(keys.networkId ? 'addr' : 'addr_test', (keys.networkId ? '71' : '70') + keys.validatorHash)}  (hash ${keys.validatorHash})`;
     $('kCnight').textContent = keys.cnightPolicy;
@@ -221,7 +233,7 @@
   }
 
   $('clear').addEventListener('click', () => {
-    for (const id of ['phrase', 'pass', 'txText', 'validator', 'confirm']) $(id).value = '';
+    for (const id of ['phrase', 'pass', 'txText', 'validator', 'confirm', 'dustAddr']) $(id).value = '';
     $('account').value = '0'; $('index').value = '0'; $('payIndex').value = '0';
     setErr('keysErr', ''); setErr('txErr', '');
     resetFrom(1);
@@ -309,7 +321,7 @@
     const result = runChecks(kind, input.bytes);
     renderReview(kind, result, input.note);
     unlock('s4', true);
-    $('signTitle').textContent = kind === 'register' ? 'Sign the registration with the stake key' : 'Sign the cNIGHT move with the payment key';
+    $('signTitle').textContent = KIND[kind].signTitle;
     if (result.ok) {
       checked = { kind, result, bytes: input.bytes };
       unlock('s5', true);
@@ -318,9 +330,38 @@
     }
   }
 
-  /** A transaction that mints is checked as a registration; anything else as a self-send. Each set of checks is complete on its own. */
+  /**
+   * A transaction that mints is checked as a registration, one that burns as a deregistration, anything else as a
+   * self-send. Each set of checks is complete on its own.
+   */
+  const KIND = {
+    register: {
+      check: C.checkRegistration, stakeKey: true, file: 'cold-stake.witness',
+      signTitle: 'Sign the registration with the stake key',
+      type: 'Type: DUST registration (it mints a token), checked with the registration rules.',
+      pass: 'Every check passed. This is a DUST registration for your stake key and the Dust key shown in step 1. Review the details, then sign below.',
+      next: 'Take this witness to the hot machine. hot/assemble-submit.sh adds the sponsor\'s signature and submits.',
+      inputsNote: 'This page cannot see what the inputs hold (that needs the chain). They belong to the sponsor; your keys only sign as the stake key.',
+    },
+    deregister: {
+      check: C.checkDeregistration, stakeKey: true, file: 'cold-stake-deregister.witness',
+      signTitle: 'Sign the deregistration with the stake key',
+      type: 'Type: DUST deregistration (it burns a registration token), checked with the deregistration rules.',
+      pass: 'Every check passed. This removes a DUST registration of your stake key. DUST keeps being generated for cNIGHT that has not moved since; to change the Dust address, register again once this is on chain, then move the cNIGHT. Review the details, then sign below.',
+      next: 'Take this witness to the hot machine: hot/assemble-submit.sh cold-stake-deregister.witness <sponsor .skey> datum.json deregister.unsigned adds the sponsor\'s signature and submits.',
+      inputsNote: 'This page cannot see what the inputs hold (that needs the chain). One is a registration UTxO of your stake key (the validator accepts your signature for nothing else); the others belong to the sponsor, who also receives the ADA that was locked.',
+    },
+    selfsend: {
+      check: C.checkSelfSend, stakeKey: false, file: 'cold-payment.witness',
+      signTitle: 'Sign the cNIGHT move with the payment key',
+      type: 'Type: cNIGHT self-send (it mints nothing), checked with the self-send rules.',
+      pass: 'Every check passed. This moves your cNIGHT back to your own address, which starts DUST generation if the registration is on chain. Review the details, then sign below.',
+      next: 'Take this witness to the hot machine. hot/submit-move-cnight.sh adds the sponsor\'s signature (if it gave an input) and submits.',
+      inputsNote: 'This page cannot see what the inputs hold (that needs the chain). Every output comes back to your address, so the most you can lose is the fee shown above.',
+    },
+  };
   function runChecks(kind, bytes) {
-    return kind === 'register' ? C.checkRegistration(bytes, keys, cryptoFns) : C.checkSelfSend(bytes, keys, cryptoFns);
+    return KIND[kind].check(bytes, keys, cryptoFns);
   }
 
   function el(tag, text, cls) {
@@ -332,13 +373,13 @@
 
   function renderReview(kind, r, note) {
     const reg = kind === 'register';
+    const self = kind === 'selfsend';
     const v = $('verdict');
-    v.replaceChildren(el('p', reg ? 'Type: DUST registration (it mints a token), checked with the registration rules.'
-      : 'Type: cNIGHT self-send (it mints nothing), checked with the self-send rules.', 'qrmeta'));
+    v.replaceChildren(el('p', KIND[kind].type, 'qrmeta'));
     v.append(r.ok
-      ? el('div', reg ? 'Every check passed. This is a DUST registration for your stake key and Dust key. Review the details, then sign below.'
-        : 'Every check passed. This moves your cNIGHT back to your own address, which starts DUST generation if the registration is on chain. Review the details, then sign below.', 'banner ok')
+      ? el('div', KIND[kind].pass, 'banner ok')
       : el('div', 'Do not sign. The transaction failed one or more checks (marked ✗).', 'banner err'));
+    if (r.ok && reg && keys.dustCustom) v.append(el('div', `DUST will go to ${keys.dustAddress}, the address you entered in step 1, not to this wallet's own Dust address. Check it once more before you sign.`, 'banner err'));
     if (note) v.append(el('p', note, 'qrmeta'));
     const order = { error: 0, warn: 1, ok: 2, info: 3 };
     const list = $('checks');
@@ -348,14 +389,14 @@
     const box = $('summary');
     const kv = el('dl', undefined, 'kv');
     const add = (k, val) => { kv.append(el('dt', k), el('dd', val)); };
-    if (s.fee !== undefined) add(reg ? 'Fee (paid by sponsor)' : 'Fee (paid from the inputs)', C.lovelaceText(s.fee));
-    if (!reg && s.cnight !== undefined) add('cNIGHT moved', `${s.cnight} unit(s)`);
+    if (s.fee !== undefined) add(self ? 'Fee (paid from the inputs)' : 'Fee (paid by sponsor)', C.lovelaceText(s.fee));
+    if (self && s.cnight !== undefined) add('cNIGHT moved', `${s.cnight} unit(s)`);
     if (s.ttl !== undefined) add('Valid until slot', s.ttl.toString());
     if (s.validFrom !== undefined) add('Valid from slot', s.validFrom.toString());
     if (s.mint.length) add('Mint', s.mint.map((m) => `${m.amount} × ${m.policy}${m.name ? '.' + m.name : ''}`).join('\n'));
     add('Required signers', s.requiredSigners.map((h) => h + (keys && h === keys.stakeKeyHash ? '  (your stake key)' : keys && h === keys.paymentKeyHash ? '  (your payment key)' : '')).join('\n') || '—');
-    if (reg) {
-      add('Inputs (sponsor)', s.inputs.join('\n') || '—');
+    if (!self) {
+      add(reg ? 'Inputs (sponsor)' : 'Inputs (the registration UTxO and the sponsor\'s)', s.inputs.join('\n') || '—');
       add('Collateral (sponsor)', s.collateral.join('\n') || '—');
     } else {
       add('Inputs (yours, and maybe a sponsor gift)', s.inputs.join('\n') || '—');
@@ -376,7 +417,7 @@
         const tr = el('tr');
         const addr = el('td', o.address.text, 'mono');
         if (reg && i === 0) addr.append(document.createElement('br'), el('span', 'mapping validator', 'tag'));
-        if (!reg && o.own) addr.append(document.createElement('br'), el('span', 'your address', 'tag you'));
+        if (self && o.own) addr.append(document.createElement('br'), el('span', 'your address', 'tag you'));
         tr.append(el('td', String(i)), addr, el('td', C.lovelaceText(o.value.lovelace).replace(' ADA', '')),
           el('td', o.value.assets.map((a) => `${a.amount} × ${a.policy.slice(0, 12)}…${a.name ? '.' + a.name : ''}`).join('\n') || '—', 'mono'),
           el('td', o.datum ? 'inline' : o.datumHash ? 'hash' : '—'));
@@ -386,8 +427,7 @@
       wrap.append(t);
       box.append(el('h3', 'Outputs'), wrap);
     }
-    box.append(el('p', reg ? 'This page cannot see what the inputs hold (that needs the chain). They belong to the sponsor; your keys only sign as the stake key.'
-      : 'This page cannot see what the inputs hold (that needs the chain). Every output comes back to your address, so the most you can lose is the fee shown above.', 'qrmeta'));
+    box.append(el('p', KIND[kind].inputsNote, 'qrmeta'));
   }
 
   // ---------------------------------------------------------------- camera (optional)
@@ -459,25 +499,23 @@
     if (!checked || !keys) { setErr('signErr', 'Check a transaction first.'); return; }
     if ($('confirm').value.trim() !== 'SIGN') { setErr('signErr', 'Type SIGN (capital letters) to confirm.'); return; }
     // Re-run the checks on the exact bytes being signed, with the keys as they are now.
-    const reg = checked.kind === 'register';
+    const K = KIND[checked.kind];
     if (C.txKind(checked.bytes) !== checked.kind) { setErr('signErr', 'The checks no longer pass; check the transaction again.'); return; }
     const again = runChecks(checked.kind, checked.bytes);
     if (!again.ok || again.bodyHash !== checked.result.bodyHash) { setErr('signErr', 'The checks no longer pass; check the transaction again.'); return; }
     let w;
     try {
       const phrase = $('phrase').value, pass = $('pass').value;
-      const s = JSON.parse(reg
+      const s = JSON.parse(K.stakeKey
         ? W.sign_with_stake_key(phrase, pass, keys.account, keys.index, again.bodyHash)
         : W.sign_with_payment_key(phrase, pass, keys.account, keys.payIndex, again.bodyHash));
-      if (s.vkey !== (reg ? keys.stakeVkey : keys.paymentVkey)) throw new Error('The signing key does not match the derived key. Derive the keys again.');
+      if (s.vkey !== (K.stakeKey ? keys.stakeVkey : keys.paymentVkey)) throw new Error('The signing key does not match the derived key. Derive the keys again.');
       w = C.witnessEnvelope(s.vkey, s.signature);
     } catch (e) { setErr('signErr', e.message || String(e)); return; }
-    const file = reg ? 'cold-stake.witness' : 'cold-payment.witness';
+    const file = K.file;
     $('confirm').value = '';
     $('witness').textContent = w;
-    $('witnessNext').textContent = reg
-      ? 'Take this witness to the hot machine. hot/assemble-submit.sh adds the sponsor\'s signature and submits.'
-      : 'Take this witness to the hot machine. hot/submit-move-cnight.sh adds the sponsor\'s signature (if it gave an input) and submits.';
+    $('witnessNext').textContent = K.next;
     $('witnessDl').download = file;
     $('witnessDl').textContent = `Download ${file}`;
     downloadLink($('witnessDl'), w);
