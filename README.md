@@ -1,4 +1,4 @@
-# mainnet-dust-generation-scripts
+# cnight-dust-tools
 
 Registers the cNIGHT held by a Cardano stake key for DUST generation on Midnight, removes a registration, and changes
 the Dust address the DUST goes to (see [Deregistering and changing the Dust address](#deregistering-and-changing-the-dust-address)).
@@ -27,11 +27,11 @@ Two transactions, both signed on the cold machine:
 1. **Cold:** open `dust-register-cold.html` and enter the recovery phrase (and passphrase, if any). Check that the
    Cardano address, stake address and Midnight Dust address it shows are the ones in your wallets.
 2. **Cold → hot:** send the datum (stake key hash + Dust public key): download `datum.json`, or show it as a QR code
-   and receive it with midnight-cold-hot's `receiver.html` or `tools/qr_scan.py`, then `node dist/qr-decode.js`.
+   and scan it with the hot page's camera.
 3. **Hot:** `hot/build-register.sh datum.json sponsor-payment.addr`. It picks two ADA-only sponsor UTxOs, the
    largest (at least 3 ADA) to pay and another of at least 2 ADA for collateral, or you pass them as arguments. It builds `register.unsigned`
    and writes `register-send.html` (12 or so cycling QR codes, via midnight-cold-hot's `qr-send.js`).
-4. **Hot → cold:** scan with `python3 tools/qr_scan.py` (midnight-cold-hot) and drop the `.mqr` file on the page, or
+4. **Hot → cold:** scan with `tools/qr_scan.py` (see [QR scanner for the cold machine](#qr-scanner-for-the-cold-machine)) and drop the `.mqr` file on the page, or
    run it with `--clipboard` and paste the frames into the page's text box (the check runs as soon as you paste). Or
    drop `register.unsigned` from USB on the page, or use the page's camera button if the browser can use the camera.
 5. **Cold:** the page decodes the transaction and checks it. It refuses to sign if anything is off: certificates,
@@ -137,6 +137,51 @@ sponsor or running `hot/prepare-sponsor.sh`). *Clear and start over* renames the
 witnesses and built or signed transactions to `*.old` and reloads the page empty; the sponsor's keys and address stay,
 and nothing on chain changes.
 
+### QR scanner for the cold machine
+
+Tor Browser on Tails does not give pages the camera, so the cold page's camera button cannot work there. Instead,
+`tools/qr_scan.py` reads the hot page's QR codes with OpenCV and writes a `received-tx-XXXXXX.mqr` file, which you
+drop on the cold page (or, with `--clipboard`, paste into it). The cold page decodes and checks the frames itself, so
+the cold machine needs no Node. The other direction needs no scanner: the hot page reads the cold page's QR codes
+with the hot machine's camera. `tools/qr_scan.py` and `tools/fetch-python-QR-libs.sh` are copied from
+midnight-cold-hot; both scanners read the same frames, so one scanner and one `pylibs` folder serve both projects.
+
+The cold machine needs only these, in one flat folder:
+
+```
+cold-bundle/
+  pylibs/                   OpenCV and NumPy, unzipped (about 270 MB)
+  qr_scan.py                from tools/
+  dust-register-cold.html   this project's cold page
+  cold-page.html            midnight-cold-hot's cold page (its dist/cold-page.html), if you use it too
+```
+
+**On the online machine.** Fetch the libraries once, and again whenever the cold machine's Python version changes
+(`PYVER` is what `python3 --version` prints there, without the last number). Nothing is installed and no install
+script runs: the wheels are only unzipped.
+
+```bash
+PYVER=3.9 tools/fetch-python-QR-libs.sh ~/cold-bundle/pylibs
+cp tools/qr_scan.py dust-register-cold.html ~/cold-bundle/
+sha256sum ~/cold-bundle/dust-register-cold.html   # compare with what cold-page/build.sh printed
+```
+
+Add midnight-cold-hot's `dist/cold-page.html` if you use it, then copy `~/cold-bundle` to the USB stick.
+
+**On Tails.** The home folder is in RAM, so copy the bundle in again after each reboot. Run the scanner from the
+folder where you want the `.mqr` files:
+
+```bash
+cp -r /media/amnesia/<usb stick>/cold-bundle ~/
+cd ~/cold-bundle
+PYTHONPATH=~/cold-bundle/pylibs python3 -c "import cv2, numpy; print(cv2.__version__)"
+PYTHONPATH=~/cold-bundle/pylibs python3 qr_scan.py --preview      # add --clipboard to paste instead of dropping
+```
+
+Open `dust-register-cold.html` (or `cold-page.html`) in Tor Browser and drop the `.mqr` file on it, or paste the
+frames. The pages need JavaScript and WebAssembly, which Tor Browser's *Standard* security level allows (shield icon in
+the toolbar, or Settings → Privacy & Security → Security Level); they cannot reach the network at any level.
+
 ### Mainnet
 
 Mainnet is the default everywhere; nothing needs to be set for the network except the node socket.
@@ -197,6 +242,7 @@ validator names this policy in its own script bytes), preprod `d2dbff622e509dda2
 | `hot/submit-move-cnight.sh` offline up to the SUBMIT prompt; refuses a witness from another payment key | Passed |
 | Page in headless Chromium: a dropped `.mqr` or `.unsigned` is loaded and checked; a `.plutus` dropped on the validator row sets the hash; pasted frames are checked at once; a drop before the keys are derived or of two files is refused; a stray drop does not leave the page | Passed |
 | midnight-cold-hot `qr_scan.py --clipboard` with a fake camera and fake clipboard tools | Passed; not yet run with a real clipboard |
+| `tools/qr_scan.py` (the copy in this repo) with a fake camera: 27 frames made by the cold page's own code, in random order with a stray QR code, collected with checksum OK; the `.mqr` it wrote decodes with the cold page's code to the same bytes | Passed (no real camera; midnight-cold-hot's copy is used on Tails with `--preview` and `--clipboard`) |
 | Mainnet validator vs the preprod one used on chain: decoded to UPLC, the programs are identical except one conditional next to the `one_shot_ref` code, which excludes the cNIGHT policy (mainnet: `0691b2fe…` and the bytes `mainnet`; preprod: `d2dbff62…`) | Checked |
 | cardano-cli `calculate-plutus-script-cost offline` on a mainnet-shaped registration: the mainnet validator accepts it with the same execution units as the preprod validator (80,108 memory, 28,929,016 steps), so the registration takes the same path; it rejects a datum naming another stake key | Passed |
 | Hot page in headless Chromium against preprod (scratch folder, throwaway sponsor key, test mnemonic, never submitted): datum received as QR frames, registration built and checked, 14 QR frames shown, witness received, assembled with the same txid; wrong confirmations and a txid not matching the assembled transaction refused; self-send built for the preprod cold wallet and its checks pass | Passed |
