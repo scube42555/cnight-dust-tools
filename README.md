@@ -132,6 +132,11 @@ the printed URL, and requests whose Host or Origin header is not the server itse
 in the same browser cannot drive it. Building again renames the previous transaction, witness and signed files to
 `*.old`.
 
+*Refresh node and sponsor* only reads the node's tip and the sponsor's UTxOs again (for example after funding the
+sponsor or running `hot/prepare-sponsor.sh`). *Clear and start over* renames the received datum, cold address,
+witnesses and built or signed transactions to `*.old` and reloads the page empty; the sponsor's keys and address stay,
+and nothing on chain changes.
+
 ### Mainnet
 
 Mainnet is the default everywhere; nothing needs to be set for the network except the node socket.
@@ -191,6 +196,7 @@ validator names this policy in its own script bytes), preprod `d2dbff622e509dda2
 | cardano-cli `calculate-plutus-script-cost offline` on a mainnet-shaped registration: the mainnet validator accepts it with the same execution units as the preprod validator (80,108 memory, 28,929,016 steps), so the registration takes the same path; it rejects a datum naming another stake key | Passed |
 | Hot page in headless Chromium against preprod (scratch folder, throwaway sponsor key, test mnemonic, never submitted): datum received as QR frames, registration built and checked, 14 QR frames shown, witness received, assembled with the same txid; wrong confirmations and a txid not matching the assembled transaction refused; self-send built for the preprod cold wallet and its checks pass | Passed |
 | Hot server refuses requests without the token, from another Origin, with another Host (DNS rebinding), and writes only its four input files | Passed |
+| Hot page *Clear and start over* against a **stub** cardano-cli: the received and built files are renamed to `*.old`, the sponsor's files stay, the page reloads empty with its token, and a request without the token is refused | Passed |
 | Hot page submission and landing watch | Passed (run by hand on preprod and mainnet) |
 | A cNIGHT self-send on preprod: both cNIGHT UTxOs spent, all cNIGHT in one new UTxO at the cold address, cold wallet paid the 0.17 ADA fee | Passed |
 | DUST appears at the Dust address (about 12 hours after the self-send) | **Not yet confirmed** |

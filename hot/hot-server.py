@@ -251,6 +251,18 @@ class Hot:
         rc, log = self.script(k["submit"], self._submit_args(kind), stdin="SUBMIT\n")
         return {"ok": rc == 0, "log": log, "txid": have}
 
+    def clear(self, _body):
+        """Start over: rename what the page received and built to *.old. The sponsor's keys and address stay."""
+        names = ["datum.json", "cold.addr", "sponsor.witness", "sponsor-move.witness"] + [
+            f for k in KINDS.values() for f in (k["unsigned"], k["witness"], k["signed"])]
+        cleared = []
+        for n in names:
+            if os.path.exists(self.path(n)):
+                os.replace(self.path(n), self.path(n + ".old"))
+                cleared.append(n)
+        self.gift = False
+        return {"cleared": cleared}
+
     def landed(self, body):
         txid = body.get("txid", "")
         if not TXID_RE.fullmatch(txid):
@@ -267,7 +279,7 @@ def make_handler(hot, token, port):
     origins = {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
     hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
     routes = {"state": hot.state, "put": hot.put, "registered": hot.registered, "build": hot.build,
-              "assemble": hot.assemble, "submit": hot.submit, "landed": hot.landed}
+              "assemble": hot.assemble, "submit": hot.submit, "landed": hot.landed, "clear": hot.clear}
     page_csp = ("default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; "
                 "img-src data: blob:; media-src blob: mediastream:; connect-src 'self'; form-action 'none'; "
                 "base-uri 'none'; frame-ancestors 'none'")
