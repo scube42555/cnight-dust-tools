@@ -111,7 +111,7 @@
       const ada = (l) => C.lovelaceText(BigInt(l));
       $('sponsor').textContent = `${s.address}\n${ada(s.lovelace)} in ${s.utxos} UTxO(s); ADA-only: ${s.adaOnly.map(ada).join(', ') || 'none'}`;
       const big = s.adaOnly.filter((l) => l >= 3e6).length, two = s.adaOnly.filter((l) => l >= 2e6).length;
-      if (big < 1 || two < 2) warns.push('For a registration the sponsor needs two ADA-only UTxOs: one of at least 3 ADA and another of at least 2 ADA.');
+      if (big < 1 || two < 2) warns.push('For a registration the sponsor needs two ADA-only UTxOs: one of at least 3 ADA and another of at least 2 ADA (for a deregistration, two of at least 2 ADA).');
     }
     if (!state.files['payment.skey']) warns.push('There is no payment.skey in the folder; the sponsor cannot sign.');
     if (!t.error && Number(t.syncProgress) < 100) warns.push(`The node is at ${t.syncProgress}% sync. Wait for 100% before building: the sponsor's UTxOs may be out of date.`);
@@ -124,15 +124,15 @@
 
   // ---------------------------------------------------------------- tabs
 
+  const TABS = { tabReg: 'flowReg', tabMove: 'flowMove', tabDereg: 'flowDereg' };
   function tab(which) {
-    $('tabReg').setAttribute('aria-selected', String(which === 'reg'));
-    $('tabMove').setAttribute('aria-selected', String(which === 'move'));
-    show($('flowReg'), which === 'reg');
-    show($('flowMove'), which === 'move');
+    for (const [t, flow] of Object.entries(TABS)) {
+      $(t).setAttribute('aria-selected', String(t === which));
+      show($(flow), t === which);
+    }
     stopCamera();
   }
-  $('tabReg').addEventListener('click', () => tab('reg'));
-  $('tabMove').addEventListener('click', () => tab('move'));
+  for (const t of Object.keys(TABS)) $(t).addEventListener('click', () => tab(t));
 
   // ---------------------------------------------------------------- receiving from the cold side
 
@@ -193,6 +193,7 @@
     if (file === 'datum.json') acceptDatum(text);
     else if (file === 'cold.addr') acceptAddr(text);
     else if (file === 'cold-stake.witness') assemble(flows.register);
+    else if (file === 'cold-stake-deregister.witness') assemble(flows.deregister);
     else if (file === 'cold-payment.witness') assemble(flows.selfsend);
   }
 
@@ -269,11 +270,24 @@
     receiveFile(r, files[0]);
   });
 
-  // ---------------------------------------------------------------- the two flows
+  // ---------------------------------------------------------------- the three flows
 
   const flows = {
-    register: { kind: 'register', ids: ['r1', 'r2', 'r3', 'r4'], build: 'rBuild', witness: 'cold-stake.witness', datum: null },
-    selfsend: { kind: 'selfsend', ids: ['m1', 'm2', 'm3', 'm4'], build: 'mBuild', witness: 'cold-payment.witness', addr: null },
+    register: {
+      kind: 'register', ids: ['r1', 'r2', 'r3', 'r4'], build: 'rBuild', witness: 'cold-stake.witness', datum: null,
+      check: C.checkRegistration, unsigned: 'register.unsigned',
+      done: 'The registration is on chain. Next, start generation: send cNIGHT to the cold address (or use the self-send tab).',
+    },
+    deregister: {
+      kind: 'deregister', ids: ['d1', 'd2', 'd3', 'd4'], build: 'dBuild', witness: 'cold-stake-deregister.witness', datum: null,
+      check: C.checkDeregistration, unsigned: 'deregister.unsigned', hits: [], utxo: '',
+      done: 'The deregistration is on chain. To change the Dust address, register again now in the Registration tab (with a datum that names the new Dust key), then move the cNIGHT. To stop DUST generation, move the cNIGHT.',
+    },
+    selfsend: {
+      kind: 'selfsend', ids: ['m1', 'm2', 'm3', 'm4'], build: 'mBuild', witness: 'cold-payment.witness', addr: null,
+      check: C.checkSelfSend, unsigned: 'move-cnight.unsigned',
+      done: 'The self-send is on chain. DUST should appear at the Dust address about 12 hours from now.',
+    },
   };
   const sec = (f, i) => $(f.ids[i]);
 
@@ -285,27 +299,63 @@
     if (step <= 1) $(f.build).disabled = false;
   }
 
+  /** The datum serves the registration and the deregistration tab (which uses only its stake key hash). */
   function acceptDatum(text, fromDisk) {
-    const f = flows.register;
     let d;
     try { d = JSON.parse(text); } catch (_) { return; }
-    f.datum = { stakeKeyHash: d.fields[0].fields[0].bytes, dustPublicKey: d.fields[1].bytes };
-    $('rStake').textContent = f.datum.stakeKeyHash;
-    $('rDust').textContent = `${f.datum.dustPublicKey} (${f.datum.dustPublicKey.length / 2} bytes)`;
+    const datum = { stakeKeyHash: d.fields[0].fields[0].bytes, dustPublicKey: d.fields[1].bytes };
+    for (const f of [flows.register, flows.deregister]) {
+      f.datum = datum;
+      if (!fromDisk || !f.built) resetFrom(f, 1);
+      $(f.build).disabled = false;
+    }
+    $('rStake').textContent = $('dStake').textContent = datum.stakeKeyHash;
+    $('rDust').textContent = `${datum.dustPublicKey} (${datum.dustPublicKey.length / 2} bytes)`;
     show($('r1Out'), true);
-    if (!fromDisk || !f.built) resetFrom(f, 1);
-    $(f.build).disabled = false;
-    const box = $('rRegistered');
-    box.replaceChildren(el('p', 'Looking for an existing registration of this stake key…', 'qrmeta'));
-    api('registered', { stakeKeyHash: f.datum.stakeKeyHash }).then((r) => {
-      if (r.hits.length === 0) box.replaceChildren(el('div', `Not registered yet (${r.total} registrations at the validator).`, 'banner ok'));
-      else {
-        const same = r.hits.some((h) => h.dustPublicKey === f.datum.dustPublicKey);
-        box.replaceChildren(el('div', same
-          ? `This stake key is already registered with this Dust key (${r.hits.map((h) => h.utxo).join(', ')}). Another registration would only lock more ADA.`
-          : `This stake key is already registered with another Dust key (${r.hits.map((h) => h.dustPublicKey).join(', ')}). Check which one you want before registering again.`, 'banner warn'));
+    show($('d1Out'), true);
+    lookupRegistrations();
+  }
+
+  /** Show, in both tabs, the registrations the stake key has on chain now. */
+  function lookupRegistrations() {
+    const datum = flows.register.datum;
+    if (!datum) return;
+    const rBox = $('rRegistered'), dBox = $('dRegistered'), fd = flows.deregister;
+    for (const b of [rBox, dBox]) b.replaceChildren(el('p', 'Looking for an existing registration of this stake key…', 'qrmeta'));
+    api('registered', { stakeKeyHash: datum.stakeKeyHash }).then((r) => {
+      if (flows.register.datum !== datum) return; // another datum arrived meanwhile
+      fd.hits = r.hits;
+      fd.utxo = '';
+      const same = r.hits.some((h) => h.dustPublicKey === datum.dustPublicKey);
+      if (r.hits.length === 0) {
+        rBox.replaceChildren(el('div', `Not registered yet (${r.total} registrations at the validator).`, 'banner ok'));
+        dBox.replaceChildren(el('div', `This stake key has no registration (${r.total} registrations at the validator). There is nothing to deregister.`, 'banner warn'));
+        return;
       }
-    }).catch((e) => box.replaceChildren(el('div', `Could not check existing registrations: ${e.message}`, 'banner warn')));
+      rBox.replaceChildren(el('div', same
+        ? `This stake key is already registered with this Dust key (${r.hits.map((h) => h.utxo).join(', ')}). Another registration would only lock more ADA.`
+        : `This stake key is already registered with another Dust key (${r.hits.map((h) => h.dustPublicKey).join(', ')}). To change the Dust address, deregister first (the Deregister tab) and register only after that is on chain: while there are two registrations, no DUST is generated.`, 'banner warn'));
+      const list = el('div');
+      for (const h of r.hits) {
+        const label = el('label', undefined, 'inline');
+        if (r.hits.length > 1) {
+          const radio = el('input'); radio.type = 'radio'; radio.name = 'dUtxo';
+          radio.onchange = () => { fd.utxo = h.utxo; resetFrom(fd, 1); };
+          label.append(radio, document.createTextNode(' '));
+        }
+        label.append(el('span', `${h.utxo}\nDust public key ${h.dustPublicKey}${h.dustPublicKey === datum.dustPublicKey ? '  (the one in the datum)' : ''}\n${C.lovelaceText(BigInt(h.lovelace))} locked`, 'mono'));
+        label.style.whiteSpace = 'pre-wrap';
+        label.style.display = 'flex';
+        label.style.margin = '8px 0';
+        list.append(label);
+      }
+      const head = r.hits.length > 1
+        ? el('div', 'This stake key has several registrations, so no DUST is generated for it now. Choose the one to remove; keep exactly one to generate DUST.', 'banner warn')
+        : el('div', same
+          ? 'Registered with the Dust key in the datum. Deregistering removes it. (To change the Dust address afterwards, make a new datum on the cold page with the new Dust address and use it in the Registration tab.)'
+          : 'Registered with a Dust key other than the one in the datum: deregister it here, then register the datum\'s Dust key in the Registration tab once this is on chain.', 'banner info');
+      dBox.replaceChildren(head, list);
+    }).catch((e) => { for (const b of [rBox, dBox]) b.replaceChildren(el('div', `Could not check existing registrations: ${e.message}`, 'banner warn')); });
   }
 
   function acceptAddr(text, fromDisk) {
@@ -322,26 +372,35 @@
 
   function expectFor(f) {
     const networkId = state.network === 'mainnet' ? 1 : 0;
-    return f.kind === 'register'
-      ? { networkId, validatorHash: state.validatorHash, stakeKeyHash: f.datum.stakeKeyHash, dustPublicKey: f.datum.dustPublicKey }
-      : { networkId, paymentKeyHash: f.addr.paymentKeyHash, stakeKeyHash: f.addr.stakeKeyHash, cnightPolicy: state.cnightPolicy };
+    return f.kind === 'selfsend'
+      ? { networkId, paymentKeyHash: f.addr.paymentKeyHash, stakeKeyHash: f.addr.stakeKeyHash, cnightPolicy: state.cnightPolicy }
+      : { networkId, validatorHash: state.validatorHash, stakeKeyHash: f.datum.stakeKeyHash, dustPublicKey: f.datum.dustPublicKey };
   }
 
   async function build(f) {
     const box = sec(f, 1).querySelector('.built');
     resetFrom(f, 1);
+    if (f.kind === 'deregister' && f.hits.length > 1 && !f.utxo) {
+      box.replaceChildren(el('div', 'Choose in step 1 which registration to remove.', 'banner err')); return;
+    }
     $(f.build).disabled = true;
     box.replaceChildren(el('p', 'Building with cardano-cli… (this queries the node and runs the validator)', 'qrmeta'));
     let r;
-    try { r = await api('build', { kind: f.kind, gift: f.kind === 'selfsend' && $('mGift').checked }); } catch (e) {
+    try { r = await api('build', { kind: f.kind, gift: f.kind === 'selfsend' && $('mGift').checked, utxo: f.kind === 'deregister' ? f.utxo : '' }); } catch (e) {
       box.replaceChildren(el('div', e.message, 'banner err')); $(f.build).disabled = false; return;
     }
     const log = el('details'); log.append(el('summary', 'Script output'), el('pre', r.log, 'log'));
     $(f.build).disabled = false;
-    if (!r.ok) { box.replaceChildren(el('div', 'The build failed. See the script output.', 'banner err'), log); log.open = true; return; }
+    if (!r.ok) {
+      // The scripts mark what to do next with "==> "; a line that sets environment variables is a command to copy.
+      const hints = r.log.split('\n').filter((l) => l.startsWith('==> ')).map((l) => l.slice(4));
+      const ban = el('div', hints.length ? 'The build failed. What to do:' : 'The build failed. See the script output.', 'banner err');
+      for (const h of hints) ban.append(el(/^[A-Z_]+=/.test(h) ? 'pre' : 'p', h, /^[A-Z_]+=/.test(h) ? 'log' : undefined));
+      box.replaceChildren(ban, log); log.open = true; return;
+    }
     const bytes = C.readTxText(r.unsigned).bytes;
     const cryptoFns = { blake2b: (h, n) => W.blake2b(h, n), bech32: (hrp, h) => W.bech32_encode(hrp, h) };
-    const check = f.kind === 'register' ? C.checkRegistration(bytes, expectFor(f), cryptoFns) : C.checkSelfSend(bytes, expectFor(f), cryptoFns);
+    const check = f.check(bytes, expectFor(f), cryptoFns);
     const s = check.summary;
     const kv = el('dl', undefined, 'kv');
     const add = (k, v) => kv.append(el('dt', k), el('dd', v));
@@ -357,14 +416,15 @@
       : el('div', 'The cold page will refuse this transaction (see the ✗ lines). Do not send it.', 'banner err');
     const qr = el('div');
     const actions = el('div', undefined, 'actions');
-    actions.append(downloadLink(f.kind === 'register' ? 'register.unsigned' : 'move-cnight.unsigned', r.unsigned));
+    actions.append(downloadLink(f.unsigned, r.unsigned));
     box.replaceChildren(verdict, kv, el('h3', 'What the cold page checks'), list, el('h3', 'Show this to the cold machine'), qr, actions, log);
-    if (check.ok) showQr(qr, 'tx', r.unsigned, f.kind === 'register' ? 'register.unsigned' : 'move-cnight.unsigned');
+    if (check.ok) showQr(qr, 'tx', r.unsigned, f.unsigned);
     f.built = { txid: r.txid };
     if (check.ok) unlock(f.ids[2], true);
   }
   $('rBuild').addEventListener('click', () => build(flows.register));
   $('mBuild').addEventListener('click', () => build(flows.selfsend));
+  $('dBuild').addEventListener('click', () => build(flows.deregister));
   $('mGift').addEventListener('change', () => { if (flows.selfsend.addr) resetFrom(flows.selfsend, 1); });
 
   async function assemble(f) {
@@ -421,11 +481,9 @@
       if (r.landed) {
         clearInterval(f.poll);
         const lines = Object.entries(r.outputs).map(([ref, v]) => `${ref}\n${v.address}\n${JSON.stringify(v.value)}`);
-        const done = f.kind === 'register'
-          ? 'The registration is on chain. Next, start generation: send cNIGHT to the cold address (or use the self-send tab).'
-          : 'The self-send is on chain. DUST should appear at the Dust address about 12 hours from now.';
-        wait.replaceWith(el('div', `On chain: ${txid}. ${done}`, 'banner ok'), el('pre', lines.join('\n\n')));
+        wait.replaceWith(el('div', `On chain: ${txid}. ${f.done}`, 'banner ok'), el('pre', lines.join('\n\n')));
         refresh();
+        if (f.kind !== 'selfsend') lookupRegistrations();
       } else {
         const min = Math.round((Date.now() - started) / 60000);
         wait.textContent = `Submitted. Not on chain yet (${min} min). A block comes about every 20 seconds; this checks every 10.`;

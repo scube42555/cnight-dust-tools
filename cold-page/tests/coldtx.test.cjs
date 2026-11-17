@@ -275,12 +275,18 @@ test('a self-send back to your own address passes', () => {
   assert.equal(r.summary.ownAddress, KEYS.baseAddress);
 });
 
-test('the transaction type is told apart, and each kind fails the other kind\'s checks', () => {
+test('the transaction type is told apart, and each kind fails the other kinds\' checks', () => {
   assert.equal(ColdTx.txKind(buildTx()), 'register');
   assert.equal(ColdTx.txKind(buildSelfSend()), 'selfsend');
+  assert.equal(ColdTx.txKind(buildDeregister()), 'deregister');
+  assert.equal(ColdTx.txKind(buildTx({ mintAmount: N(-1) })), 'deregister');
   assert.equal(ColdTx.txKind(bytes([0xff])), 'register');
   assert.equal(ColdTx.checkSelfSend(buildTx(), SS_EXPECT, cryptoFns).ok, false);
   assert.equal(ColdTx.checkRegistration(buildSelfSend(), EXPECT, cryptoFns).ok, false);
+  assert.equal(ColdTx.checkSelfSend(buildDeregister(), SS_EXPECT, cryptoFns).ok, false);
+  assert.equal(ColdTx.checkRegistration(buildDeregister(), EXPECT, cryptoFns).ok, false);
+  assert.equal(ColdTx.checkDeregistration(buildTx(), EXPECT, cryptoFns).ok, false);
+  assert.equal(ColdTx.checkDeregistration(buildSelfSend(), EXPECT, cryptoFns).ok, false);
 });
 
 const OTHER_PAY = 'ee'.repeat(28);
@@ -329,4 +335,132 @@ test('the payment-key witness verifies over the self-send body hash', () => {
 if (process.env.COLD_WRITE_FIXTURE) {
   const env = { type: 'Unwitnessed Tx ConwayEra', description: 'Ledger Cddl Format', cborHex: Buffer.from(buildSelfSend()).toString('hex') };
   fs.writeFileSync(path.join(process.env.COLD_WRITE_FIXTURE, 'testvector-move-cnight.unsigned'), JSON.stringify(env, null, 4) + '\n');
+}
+
+// ------------------------------------------------------------------ deregistration
+
+const REG_TXID = 'ab'.repeat(32);
+const SPEND_RED = [0xa0]; // {} : the spend redeemer midnight-node's deregister.sh passes
+const BURN_RED = T(122, [0x80]); // Constr 1 []
+const redeemerEntry = (tag, index, data) => [A([U(tag), U(index)]), A([data, A([U(500000), U(200000000)])])];
+
+/** A deregistration shaped like cardano-cli's output: sponsor input + registration UTxO, burn of one token, change to the sponsor. */
+function buildDeregister(mod = {}) {
+  const change = M([[U(0), B(mod.changeAddr || SPONSOR_ADDR)], [U(1), mod.changeValue || U(96000000)]]);
+  const body = [
+    [U(0), T(258, A(mod.inputs || [A([B(TXID), U(1)]), A([B(REG_TXID), U(0)])]))],
+    [U(1), A([change, ...(mod.extraOuts || [])])],
+    [U(2), mod.fee || U(400000)],
+    [U(3), U(170000000)],
+    [U(9), mod.mint || M([[B(mod.mintPolicy || VALIDATOR), M([[B(mod.assetName || ''), mod.mintAmount || N(-1)]])]])],
+    [U(11), B('dd'.repeat(32))],
+    ...(mod.noCollateral ? [] : [[U(13), T(258, A([A([B(TXID), U(0)])]))]]),
+    [U(14), T(258, A([B(mod.signer || KEYS.stakeKeyHash)]))],
+    ...(mod.extraBody || []),
+  ];
+  const reds = mod.redeemers || [redeemerEntry(0, 1, SPEND_RED), redeemerEntry(1, 0, mod.burnRedeemer || BURN_RED)];
+  const wits = M([[U(5), M(reds)], [U(7), A([B(SCRIPT), ...(mod.extraScripts || [])])], ...(mod.extraWits || [])]);
+  return bytes(A([M(body), wits, mod.valid || TRUE, NULL]));
+}
+const DEREG_EXPECT = { networkId: 1, validatorHash: VALIDATOR, stakeKeyHash: KEYS.stakeKeyHash };
+
+test('a well-formed deregistration passes every check', () => {
+  const r = ColdTx.checkDeregistration(buildDeregister(), DEREG_EXPECT, cryptoFns);
+  assert.deepEqual(errors(r), []);
+  assert.equal(r.ok, true);
+  assert.equal(r.summary.mint[0].amount, -1n);
+  assert.deepEqual(r.summary.inputs, [TXID + '#1', REG_TXID + '#0']);
+  const tx = buildDeregister();
+  const top = ColdTx.decodeCbor(tx);
+  assert.equal(r.bodyHash, W.blake2b(Buffer.from(tx.slice(top.items[0].s, top.items[0].e)).toString('hex'), 32));
+});
+
+const TOKEN_OUT = (addr) => M([[U(0), B(addr)], [U(1), A([U(2000000), M([[B(VALIDATOR), M([[B(''), U(1)]])]])])]]);
+const DEREG_BAD = {
+  'two tokens burned': { mintAmount: N(-2) },
+  'a mint, not a burn': { mintAmount: U(1) },
+  'burn of another policy': { mintPolicy: 'ee'.repeat(28) },
+  'burn with an asset name': { assetName: '41' },
+  'another token minted alongside': { mint: M([[B(VALIDATOR), M([[B(''), N(-1)]])], [B('ee'.repeat(28)), M([[B(''), U(1)]])]]) },
+  'a second registration asset minted': { mint: M([[B(VALIDATOR), M([[B(''), N(-1)], [B('41'), U(1)]])]]) },
+  'stake key not a required signer': { signer: 'ee'.repeat(28) },
+  'certificates present': { extraBody: [[U(4), T(258, A([A([U(1), A([U(0), B(KEYS.stakeKeyHash)])])]))]] },
+  'withdrawals present': { extraBody: [[U(5), M([[B('e1' + KEYS.stakeKeyHash), U(1000000)]])]] },
+  'governance votes present': { extraBody: [[U(19), M([])]] },
+  'unknown body field': { extraBody: [[U(99), U(1)]] },
+  'an output goes to the validator': { extraOuts: [M([[U(0), B('71' + VALIDATOR)], [U(1), U(2000000)]])] },
+  'an output to the validator with a stake part': { extraOuts: [M([[U(0), B('11' + VALIDATOR + KEYS.stakeKeyHash)], [U(1), U(2000000)]])] },
+  'an output holds a registration token': { extraOuts: [TOKEN_OUT(SPONSOR_ADDR)] },
+  'collateral return to the validator': { extraBody: [[U(16), M([[U(0), B('71' + VALIDATOR)], [U(1), U(2000000)]])]] },
+  'mint redeemer is register': { burnRedeemer: T(121, [0x80]) },
+  'no spend redeemer': { redeemers: [redeemerEntry(1, 0, BURN_RED)] },
+  'two script inputs spent': { redeemers: [redeemerEntry(0, 0, SPEND_RED), redeemerEntry(0, 1, SPEND_RED), redeemerEntry(1, 0, BURN_RED)] },
+  'a redeemer for a certificate': { redeemers: [redeemerEntry(0, 1, SPEND_RED), redeemerEntry(1, 0, BURN_RED), redeemerEntry(2, 0, SPEND_RED)] },
+  'a redeemer for a withdrawal': { redeemers: [redeemerEntry(0, 1, SPEND_RED), redeemerEntry(1, 0, BURN_RED), redeemerEntry(3, 0, SPEND_RED)] },
+  'no redeemers at all': { redeemers: [] },
+  'another Plutus V3 script included': { extraScripts: [B('0101')] },
+  'a native script included': { extraWits: [[U(1), A([A([U(0), B('ee'.repeat(28))])])]] },
+  'no collateral': { noCollateral: true },
+  'only one input': { inputs: [A([B(REG_TXID), U(0)])] },
+  'change on another network': { changeAddr: '00' + SPONSOR_PAY + 'cc'.repeat(28) },
+  'network id mismatch': { extraBody: [[U(15), U(0)]] },
+  'marked invalid': { valid: [0xf4] },
+};
+for (const [name, mod] of Object.entries(DEREG_BAD)) {
+  test(`deregistration refuses: ${name}`, () => {
+    const r = ColdTx.checkDeregistration(buildDeregister(mod), DEREG_EXPECT, cryptoFns);
+    assert.equal(r.ok, false);
+    assert.ok(errors(r).length > 0);
+  });
+}
+
+test('deregistration checks refuse garbage without throwing', () => {
+  const tx = buildDeregister();
+  for (const b of [tx.slice(0, tx.length - 5), bytes([0xff]), new Uint8Array(0), bytes([...Array(100).fill(0x81), 0x00])]) {
+    assert.equal(ColdTx.checkDeregistration(b, DEREG_EXPECT, cryptoFns).ok, false);
+  }
+});
+
+test('the stake-key witness verifies over the deregistration body hash', () => {
+  const r = ColdTx.checkDeregistration(buildDeregister(), DEREG_EXPECT, cryptoFns);
+  const s = JSON.parse(W.sign_with_stake_key(MNEMONIC, '', 0, 0, r.bodyHash));
+  assert.equal(s.vkey, KEYS.stakeVkey);
+  const pub = nodeCrypto.createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), Buffer.from(s.vkey, 'hex')]), format: 'der', type: 'spki' });
+  assert.ok(nodeCrypto.verify(null, Buffer.from(r.bodyHash, 'hex'), pub, Buffer.from(s.signature, 'hex')));
+});
+
+// ------------------------------------------------------------------ registering another Dust address
+
+const OTHER = JSON.parse(W.cold_keys(MNEMONIC, '', 'mainnet', 1, 0)); // another account's Dust key stands in for another wallet
+
+test('a Dust address typed on the page decodes to its public key, and anything else is refused', () => {
+  assert.equal(JSON.parse(W.dust_address_decode(KEYS.dustAddress, 'mainnet')).dustPublicKey, KEYS.dustPublicKey);
+  assert.equal(JSON.parse(W.dust_address_decode(`  ${OTHER.dustAddress.toUpperCase()}\n`, 'mainnet')).dustPublicKey, OTHER.dustPublicKey);
+  const pre = JSON.parse(W.cold_keys(MNEMONIC, '', 'preprod', 0, 0));
+  assert.match(pre.dustAddress, /^mn_dust_preprod1/);
+  assert.equal(JSON.parse(W.dust_address_decode(pre.dustAddress, 'preprod')).dustPublicKey, KEYS.dustPublicKey);
+  assert.throws(() => W.dust_address_decode(pre.dustAddress, 'mainnet'), /starts with/);       // other network
+  assert.throws(() => W.dust_address_decode(KEYS.dustAddress, 'preprod'), /starts with/);
+  assert.throws(() => W.dust_address_decode(KEYS.stakeAddress, 'mainnet'), /bech32m/);          // bech32, a Cardano address
+  assert.throws(() => W.dust_address_decode(W.bech32_encode('mn_dust', KEYS.dustPublicKey), 'mainnet'), /bech32m/);
+  const a = KEYS.dustAddress;
+  assert.throws(() => W.dust_address_decode(a.slice(0, -1) + (a.endsWith('q') ? 'p' : 'q'), 'mainnet'), /Not a Dust address/); // typo
+  assert.throws(() => W.dust_address_decode(a.slice(0, -4), 'mainnet'), /Not a Dust address/);
+  assert.throws(() => W.dust_address_decode('', 'mainnet'), /Not a Dust address/);
+});
+
+test('a registration naming the chosen Dust key passes, and this wallet\'s own key is then refused', () => {
+  const expect = { ...EXPECT, dustPublicKey: OTHER.dustPublicKey, dustCustom: true };
+  const good = ColdTx.checkRegistration(buildTx({ datum: datum(KEYS.stakeKeyHash, OTHER.dustPublicKey) }), expect, cryptoFns);
+  assert.deepEqual(errors(good), []);
+  assert.ok(good.checks.some((c) => c.level === 'ok' && /you entered/.test(c.text)));
+  const bad = ColdTx.checkRegistration(buildTx(), expect, cryptoFns);
+  assert.equal(bad.ok, false);
+  assert.ok(errors(bad).some((t) => /not the one you entered/.test(t)));
+  assert.equal(JSON.parse(ColdTx.datumJson(KEYS.stakeKeyHash, OTHER.dustPublicKey)).fields[1].bytes, OTHER.dustPublicKey);
+});
+
+if (process.env.COLD_WRITE_FIXTURE) {
+  const env = { type: 'Unwitnessed Tx ConwayEra', description: 'Ledger Cddl Format', cborHex: Buffer.from(buildDeregister()).toString('hex') };
+  fs.writeFileSync(path.join(process.env.COLD_WRITE_FIXTURE, 'testvector-deregister.unsigned'), JSON.stringify(env, null, 4) + '\n');
 }

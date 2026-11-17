@@ -1,6 +1,8 @@
 # mainnet-dust-generation-scripts
 
-Registers the cNIGHT held by a Cardano stake key for DUST generation on Midnight. There are two ways to do it:
+Registers the cNIGHT held by a Cardano stake key for DUST generation on Midnight, removes a registration, and changes
+the Dust address the DUST goes to (see [Deregistering and changing the Dust address](#deregistering-and-changing-the-dust-address)).
+There are two ways to register:
 
 - **Cold/hot with a sponsor** (new, recommended for keys kept offline): the stake key signs on an offline machine in
   one HTML page. A sponsor wallet on the online machine pays the locked ADA, fee and collateral. No collateral transaction,
@@ -33,7 +35,7 @@ Two transactions, both signed on the cold machine:
    run it with `--clipboard` and paste the frames into the page's text box (the check runs as soon as you paste). Or
    drop `register.unsigned` from USB on the page, or use the page's camera button if the browser can use the camera.
 5. **Cold:** the page decodes the transaction and checks it. It refuses to sign if anything is off: certificates,
-   withdrawals, governance or donation fields, unknown fields, a datum naming another stake key or Dust key, output 0
+   withdrawals, governance or donation fields, unknown fields, a datum naming another stake key or a Dust key other than the one shown in step 1, output 0
    not going to the mapping validator with exactly one token, any mint other than one registration token, a deregister
    redeemer, a missing required signer, or the wrong network. Type `SIGN` and it produces `cold-stake.witness`
    (one QR code).
@@ -58,6 +60,51 @@ Two transactions, both signed on the cold machine:
    type `SUBMIT`.
 10. DUST should start to appear at the Dust address the page shows about 12 hours later.
 
+### Deregistering and changing the Dust address
+
+What the chain allows:
+
+- **Deregistering** spends the registration UTxO at the mapping validator and burns its token, signed by the stake
+  key. The ADA that was locked with it (about 1.35 ADA) comes back; here it goes to the sponsor, who pays the fee.
+- The validator has **no way to update** a registration. To change the Dust address you deregister, then register
+  again with the new Dust address.
+- Midnight generates DUST for a stake key only while it has **exactly one** registration. So deregister first and
+  register second; never the other way round.
+- cNIGHT UTxOs keep the Dust address they were created under. After a deregistration, DUST keeps being generated
+  until the cNIGHT moves. After a new registration, the cNIGHT must move again before DUST goes to the new address.
+
+**Deregister** (one transaction, signed by the cold stake key):
+
+1. **Cold:** derive the keys as for a registration and send `datum.json` to the hot machine. Only its stake key
+   hash is used here.
+2. **Hot:** `hot/build-deregister.sh datum.json sponsor-payment.addr`. It finds the stake key's registration at the
+   validator and prints the Dust key it names. If the stake key has several registrations, it lists them and you
+   pass the one to remove as a third argument (`txid#index`). The sponsor needs two ADA-only UTxOs of at least 2 ADA.
+   It writes `deregister.unsigned` (and `deregister-send.html`).
+3. **Cold:** load it in step 3. The page sees the burn and checks it as a deregistration. It signs only if exactly one
+   registration token is burned and nothing is minted, no output goes to the validator or holds a registration token,
+   the redeemers are the deregister redeemer and one script spend, your stake key is a required signer, and there are
+   no certificates, withdrawals, governance fields, other scripts or unknown fields. The page cannot see which
+   UTxO is spent; the validator accepts your stake-key signature only for a registration of your own stake key.
+   It produces `cold-stake-deregister.witness`.
+4. **Hot:** `hot/assemble-submit.sh cold-stake-deregister.witness sponsor-payment.skey datum.json deregister.unsigned`,
+   then type `SUBMIT`.
+5. To stop DUST generation, move the cNIGHT once the deregistration is on chain (steps 7 to 9 above, or send it to
+   another wallet).
+
+**Change the Dust address** (three transactions):
+
+1. Deregister, as above, and wait until it is on chain.
+2. Register again with the new Dust address. On the cold page, step 1, enter it in *Dust address that receives the
+   DUST* and derive the keys again. The page checks that it is a Dust address of the chosen network, shows it next
+   to the wallet's own Dust address with a warning, and puts its public key in `datum.json`. Then follow steps 2 to 6
+   of the registration with that datum. The page refuses a registration whose datum names any other Dust key. Leave
+   the field empty to register the wallet's own Dust address.
+3. Once the registration is on chain, move the cNIGHT (steps 7 to 9 above). DUST starts at the new address about
+   12 hours later.
+
+The page cannot tell whose Dust address you entered. Compare it with the receiving Midnight wallet before signing.
+
 ### Hot page
 
 Instead of running the hot scripts by hand, start the local hot page in the folder that holds the sponsor's
@@ -68,15 +115,16 @@ python3 hot/hot-server.py --dir mainnet --socket /tmp/mainnet.socket --cli /path
 # preprod: --network preprod --validator <preprod mapping validator .plutus>
 ```
 
-Open the URL it prints. The page shows the network, the node's sync and the sponsor's ADA, and has two tabs,
-*Registration* and *Start generation (optional self-send)*. Each tab has four steps:
+Open the URL it prints. The page shows the network, the node's sync and the sponsor's ADA, and has three tabs,
+*Registration*, *Start generation (optional self-send)* and *Deregister / change Dust address*. Each tab has four steps:
 1. Receive the datum or the cold address: camera, dropped file or pasted QR frames.
 2. Build with your node. The page shows the transaction, runs the same checks the cold page will run, and shows it
    as cycling QR codes, with buttons for a slower or faster cycle.
 3. Receive the cold witness: camera, drop or paste. The page checks it and assembles the transaction.
 4. Type `SUBMIT`, then the page watches the chain until the transaction lands.
 
-The registration tab also says whether the stake key is already registered.
+The registration tab also says whether the stake key is already registered. The deregister tab lists the stake
+key's registrations with the Dust key each one names, and asks which to remove when there are several.
 
 All the Cardano work is done by the scripts in `hot/`, run with fixed arguments. The server never reads
 `payment.skey`; it passes its path to the scripts. It listens on 127.0.0.1 only. Every request needs the token from
@@ -97,6 +145,9 @@ Mainnet is the default everywhere; nothing needs to be set for the network excep
   minimum for the registration output (1.353340 ADA with mainnet's current parameters) stays with the registration token
   at the validator address, plus the fee (0.34 ADA on preprod). Set `REG_LOVELACE` to lock a different amount (1 to 5 ADA). The collateral is only taken if the
   script fails, which `transaction build` checks before you sign.
+  If the sponsor's ADA is not split that way (one UTxO only, or ADA sitting with tokens such as cNIGHT), run
+  `hot/prepare-sponsor.sh payment.addr payment.skey`: it sends everything back to the sponsor's own address as a 2 ADA
+  collateral UTxO, one UTxO holding any tokens with the minimum ADA, and the rest as the paying UTxO, after a typed SUBMIT.
 - **Hot scripts:** run them in the folder that holds `datum.json` and the keys, with `SOCKET_PATH` set to your mainnet
   node's socket (default `/ada/mainnet/db/node.socket`) and `CARDANO_CLI` if needed. Leave `CARDANO_NODE_NETWORK_ID` and
   `MAPPING_VALIDATOR` unset: `build-register.sh` stops if the validator does not hash to `73e4aea3…`.
@@ -140,11 +191,25 @@ validator names this policy in its own script bytes), preprod `d2dbff622e509dda2
 | cardano-cli `calculate-plutus-script-cost offline` on a mainnet-shaped registration: the mainnet validator accepts it with the same execution units as the preprod validator (80,108 memory, 28,929,016 steps), so the registration takes the same path; it rejects a datum naming another stake key | Passed |
 | Hot page in headless Chromium against preprod (scratch folder, throwaway sponsor key, test mnemonic, never submitted): datum received as QR frames, registration built and checked, 14 QR frames shown, witness received, assembled with the same txid; wrong confirmations and a txid not matching the assembled transaction refused; self-send built for the preprod cold wallet and its checks pass | Passed |
 | Hot server refuses requests without the token, from another Origin, with another Host (DNS rebinding), and writes only its four input files | Passed |
-| Hot page submission and landing watch | **Not yet run** |
+| Hot page submission and landing watch | Passed (run by hand on preprod and mainnet) |
 | A cNIGHT self-send on preprod: both cNIGHT UTxOs spent, all cNIGHT in one new UTxO at the cold address, cold wallet paid the 0.17 ADA fee | Passed |
 | DUST appears at the Dust address (about 12 hours after the self-send) | **Not yet confirmed** |
+| Deregistration checks: a synthetic deregistration passes; 28 bad variants refused (wrong burn, extra mint, output to the validator or holding a token, wrong or missing redeemers, other scripts, certificates, withdrawals, votes, missing signer, no collateral, wrong network, marked invalid); the three kinds are told apart and each fails the others' checks | Passed (`node --test cold-page/tests/`) |
+| Dust address field: the WASM decoder returns the public key of a Dust address and refuses another network, plain bech32, a Cardano address, a typo and a truncated address; a registration naming the entered key passes and one naming the wallet's own key is then refused | Passed (`node --test cold-page/tests/`) |
+| Page in headless Chromium (test mnemonic, synthetic transactions): an entered Dust address is shown with the warning and used in the datum; a deregistration is recognised, checked and signed with the stake key (`cold-stake-deregister.witness`); registration and self-send unchanged | Passed |
+| `hot/build-deregister.sh`, `hot/assemble-submit.sh` and the hot server's deregister flow against a **stub** cardano-cli (fake chain data, no node): the registration is found by stake key and token, several registrations need a choice, another key's registration and a malformed reference are refused, the witness is checked, wrong confirmations and a wrong txid are refused | Passed |
+| `hot/build-deregister.sh` against a preprod node (cardano-cli 11.2.3): it finds the test registration, `transaction build` runs the validator on live chain data and it accepts the spend redeemer `{}` and the burn; fee 0.342 ADA; the cold page's deregistration checks all pass and its body hash equals `transaction txid` | Passed (built only, not submitted) |
+| A deregistration on preprod, then a registration with another Dust address entered on the cold page: the stake key has exactly one registration at the validator, naming the new Dust key, 1.353340 ADA locked | Passed |
+| DUST appears at the new Dust address after the re-registration (cNIGHT sent to the cold address from another wallet) | Passed (preprod) |
+| Hot page's deregister tab in a browser against preprod: build, QR, witness, submit, landing watch | Passed (run by hand) |
 | `hot/build-register.sh` against a mainnet node: `transaction build` runs the mainnet validator on live chain data and it passes; 1.353340 ADA locked (ledger minimum), fee 0.344 ADA; the cold page's mainnet checks all pass | Passed |
 | A full registration on mainnet: token, 1.353340 ADA and the datum at the mainnet validator address; collateral not taken | Passed |
+| `hot/prepare-sponsor.sh` on mainnet: one ADA-only UTxO and one holding cNIGHT became a 2 ADA collateral UTxO, a UTxO with the cNIGHT and the minimum ADA, and the paying UTxO; fee 0.18 ADA | Passed |
+| A deregistration on mainnet through the hot page: the mainnet validator accepts the spend redeemer `{}` and the burn, the locked ADA comes back to the sponsor, collateral not taken, fee 0.34 ADA; then a registration with another Dust address (1.353340 ADA locked, fee 0.34 ADA). In this test the cold wallet was also the sponsor | Passed |
+| A cNIGHT self-send on mainnet with a sponsor gift (without it the build is refused: the cNIGHT UTxO held too little ADA to pay the fee): all cNIGHT in one new UTxO at the cold address, fee 0.18 ADA | Passed |
+| DUST appears at the new Dust address on mainnet | Passed |
+
+Transaction ids, addresses and dates of these runs are kept in a local `TEST-LOG.md`, which is not committed.
 
 ### Building the page
 

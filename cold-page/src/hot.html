@@ -108,6 +108,7 @@ video { width: 100%; max-width: 420px; border-radius: 6px; background: #000; }
     <div class="tabs" role="tablist">
       <button id="tabReg" role="tab" type="button" aria-selected="true">Registration</button>
       <button id="tabMove" role="tab" type="button" aria-selected="false">Start generation (optional self-send)</button>
+      <button id="tabDereg" role="tab" type="button" aria-selected="false">Deregister / change Dust address</button>
     </div>
   </section>
 
@@ -159,7 +160,8 @@ video { width: 100%; max-width: 420px; border-radius: 6px; background: #000; }
     <section id="m2" class="locked">
       <h2><span class="n">2</span>Build the self-send and show it to the cold machine</h2>
       <p>Every cNIGHT UTxO at the cold address is spent and everything comes back to it. Without a gift the cold wallet
-        pays the fee (about 0.2 ADA). With a gift, one small ADA-only sponsor UTxO (1 to 5 ADA) is added and its whole
+        pays the fee (about 0.2 ADA); that needs about 1.5 ADA or more on its cNIGHT UTxOs, because the output must keep
+        the ledger's minimum (about 1.2 ADA). With less, the gift is required and the build says so. With a gift, one small ADA-only sponsor UTxO (1 to 5 ADA) is added and its whole
         value goes to the cold wallet.</p>
       <label class="inline"><input id="mGift" type="checkbox"> Add a sponsor gift UTxO to pay the fee</label>
       <div class="actions"><button id="mBuild" type="button" disabled>Build self-send</button></div>
@@ -174,6 +176,45 @@ video { width: 100%; max-width: 420px; border-radius: 6px; background: #000; }
     </section>
 
     <section id="m4" class="locked">
+      <h2><span class="n">4</span>Submit</h2>
+      <div class="submit"></div>
+    </section>
+  </div>
+  <div id="flowDereg" hidden>
+    <section id="d0">
+      <p>A deregistration removes the stake key's registration and returns the locked ADA to the sponsor. DUST keeps
+        being generated for cNIGHT that has not moved since, so move the cNIGHT afterwards to stop it.</p>
+      <p><strong>To change the Dust address:</strong> (1) deregister here; (2) once that is on chain, register again in
+        the <em>Registration</em> tab with a datum made on the cold page with the new Dust address; (3) once that is on
+        chain, move the cNIGHT (the <em>Start generation</em> tab, or send it from another wallet). Do not register the
+        new address first: while a stake key has two registrations, Midnight generates no DUST for it.</p>
+    </section>
+    <section id="d1">
+      <h2><span class="n">1</span>Receive the datum from the cold page</h2>
+      <p>The same <span class="mono">datum.json</span> as for a registration (cold page step 2). Only its stake key hash
+        is used here, to find the registration. Scan it, drop it on this section, or paste it.</p>
+      <div class="recv" data-kinds="datum" data-file="datum.json"></div>
+      <div id="d1Out" hidden>
+        <dl class="kv"><dt>Stake key hash</dt><dd id="dStake"></dd></dl>
+        <div id="dRegistered"></div>
+      </div>
+    </section>
+
+    <section id="d2" class="locked">
+      <h2><span class="n">2</span>Build the deregistration and show it to the cold machine</h2>
+      <p>The registration UTxO is spent and its token burned. The sponsor pays the fee and the collateral.</p>
+      <div class="actions"><button id="dBuild" type="button" disabled>Build deregistration</button></div>
+      <div class="built"></div>
+    </section>
+
+    <section id="d3" class="locked">
+      <h2><span class="n">3</span>Receive the stake-key witness</h2>
+      <p>The cold page shows <span class="mono">cold-stake-deregister.witness</span> after you type SIGN there.</p>
+      <div class="recv" data-kinds="witness" data-file="cold-stake-deregister.witness"></div>
+      <div class="assembled"></div>
+    </section>
+
+    <section id="d4" class="locked">
       <h2><span class="n">4</span>Submit</h2>
       <div class="submit"></div>
     </section>

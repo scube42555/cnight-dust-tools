@@ -36,6 +36,19 @@ SCRIPT="${MAPPING_VALIDATOR:-$HERE/mapping_validator.plutus}"
 REDEEMER="$HERE/register_red.json"
 SPONSOR_ADDR="$(< "$SPONSOR_ADDR_FILE")"
 
+# Printed when the sponsor's UTxOs do not fit. The hot page shows the lines starting with "==> " as what to do next.
+prepare_hint() {
+  local addr skey
+  addr="$(realpath "$SPONSOR_ADDR_FILE")"
+  skey="$(dirname "$addr")/payment.skey"
+  [[ -e "$skey" ]] || skey="<sponsor-payment.skey>"
+  {
+    echo "==> hot/prepare-sponsor.sh rearranges the sponsor's UTxOs into that shape; everything stays at the sponsor's address."
+    echo "==> Run it in a terminal, type SUBMIT, wait about a minute for it to land, then build again:"
+    echo "==> CARDANO_CLI='$CLI' CARDANO_NODE_NETWORK_ID='$CARDANO_NODE_NETWORK_ID' SOCKET_PATH='$SOCKET_PATH' '$HERE/hot/prepare-sponsor.sh' '$addr' '$skey'"
+  } >&2
+}
+
 echo "Network: $CARDANO_NODE_NETWORK_ID"
 
 # The datum crossed the air gap: read only the two fields we need and check their shape.
@@ -75,10 +88,10 @@ pay = ada[-1] if ada and ada[-1][0] >= 3_000_000 else None
 coll = [x for x in ada[:-1] if x[0] >= 2_000_000]
 if not pay or not coll:
     sys.exit("The sponsor needs two ADA-only UTxOs: one of at least 3 ADA to pay, and another of at least 2 ADA for "
-             "collateral. Send it two such outputs.")
+             "collateral.")
 print(pay[1], coll[0][1])
 EOF
-)"
+)" || { prepare_hint; exit 1; }
   read -r UTXO COLLATERAL <<< "$PICKED"
 fi
 # ADA locked with the registration token: the ledger minimum for this exact output (address, token, inline datum).

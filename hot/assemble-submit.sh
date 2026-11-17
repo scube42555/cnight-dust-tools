@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# HOT (online) machine. Adds the sponsor's signature to the registration, joins the cold stake-key witness, and submits.
+# HOT (online) machine. Adds the sponsor's signature to the registration or deregistration, joins the cold stake-key
+# witness, and submits.
 #
 #   hot/assemble-submit.sh <cold-stake.witness | received-witness-*.mqr> <sponsor-payment.skey> [datum.json] [register.unsigned]
+#   hot/assemble-submit.sh cold-stake-deregister.witness <sponsor-payment.skey> datum.json deregister.unsigned
 #
 # The cold witness comes from dust-register-cold.html step 5, as a file or as QR frames received with
 # midnight-cold-hot's receiver.html / qr_scan.py (an .mqr file, decoded here with qr-decode.js).
+# The files written are named after the unsigned transaction: register.unsigned gives register.signed and
+# register-signed-tx.hash; deregister.unsigned gives deregister.signed and deregister-signed-tx.hash.
 #
 # ASSEMBLE_ONLY=1 stops after assembling, with exit status 0 (used by hot/hot-server.py, which asks for SUBMIT itself).
 # Environment: CARDANO_CLI (path to cardano-cli), CARDANO_NODE_NETWORK_ID (mainnet, or 1 for preprod), SOCKET_PATH, QR_DECODE (path to qr-decode.js).
@@ -24,12 +28,19 @@ COLD="${1:?usage: hot/assemble-submit.sh <cold-stake.witness|.mqr> <sponsor-paym
 SPONSOR_SKEY="${2:?usage: hot/assemble-submit.sh <cold-stake.witness|.mqr> <sponsor-payment.skey> [datum.json] [register.unsigned]}"
 DATUM="${3:-datum.json}"
 TX="${4:-register.unsigned}"
+NAME="$(basename "$TX" .unsigned)"
+if [[ "$NAME" != register && "$NAME" != deregister ]]; then
+  echo "The transaction file must be register.unsigned or deregister.unsigned, not $TX. Stopping." >&2
+  exit 1
+fi
+COLD_NAME=cold-stake.witness
+[[ "$NAME" == deregister ]] && COLD_NAME=cold-stake-deregister.witness
 
 echo "Network: $CARDANO_NODE_NETWORK_ID"
 
 if [[ "$COLD" == *.mqr ]]; then
-  node "$QR_DECODE" "$COLD" cold-stake.witness
-  COLD=cold-stake.witness
+  node "$QR_DECODE" "$COLD" "$COLD_NAME"
+  COLD="$COLD_NAME"
 fi
 
 # The witness crossed the air gap: check its shape, and that its key is the stake key named in the datum.
@@ -47,10 +58,10 @@ print(f"Cold witness: stake key {vkey_hash} (matches the datum)")
 EOF
 
 "$CLI" conway transaction witness --tx-body-file "$TX" --signing-key-file "$SPONSOR_SKEY" --out-file sponsor.witness
-"$CLI" conway transaction assemble --tx-body-file "$TX" --witness-file "$COLD" --witness-file sponsor.witness --out-file register.signed
+"$CLI" conway transaction assemble --tx-body-file "$TX" --witness-file "$COLD" --witness-file sponsor.witness --out-file "$NAME.signed"
 
-TXID="$(txid register.signed)"
-echo "Signed transaction: register.signed (tx id $TXID)"
+TXID="$(txid "$NAME.signed")"
+echo "Signed transaction: $NAME.signed (tx id $TXID)"
 if [[ -n "${ASSEMBLE_ONLY:-}" ]]; then
   echo "Assembled only (ASSEMBLE_ONLY is set); not submitted."
   exit 0
@@ -60,6 +71,11 @@ if [[ "$answer" != SUBMIT ]]; then
   echo "Not submitted."
   exit 1
 fi
-"$CLI" conway transaction submit --socket-path "$SOCKET_PATH" --tx-file register.signed
-echo "$TXID" > register-signed-tx.hash
-echo "Submitted $TXID. Once it is on chain, move the cNIGHT (README step 7) to start DUST generation."
+"$CLI" conway transaction submit --socket-path "$SOCKET_PATH" --tx-file "$NAME.signed"
+echo "$TXID" > "$NAME-signed-tx.hash"
+if [[ "$NAME" == deregister ]]; then
+  echo "Submitted $TXID. Once it is on chain the registration is gone. To change the Dust address, register again now"
+  echo "(hot/build-register.sh), then move the cNIGHT. To stop DUST generation, move the cNIGHT (hot/build-move-cnight.sh)."
+else
+  echo "Submitted $TXID. Once it is on chain, move the cNIGHT (README step 7) to start DUST generation."
+fi
