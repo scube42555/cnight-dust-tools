@@ -91,7 +91,10 @@
   // ---------------------------------------------------------------- status
 
   async function refresh() {
-    try { state = await api('state'); } catch (e) { fatal(e.message); return; }
+    $('refresh').disabled = true;
+    $('refreshed').textContent = 'Reading the node and the sponsor…';
+    try { state = await api('state'); } catch (e) { fatal(e.message); $('refreshed').textContent = ''; return; } finally { $('refresh').disabled = false; }
+    $('refreshed').textContent = `Updated ${new Date().toLocaleTimeString()}`;
     $('fatal').hidden = true;
     const net = $('net');
     net.textContent = state.network === 'mainnet' ? 'MAINNET' : state.network;
@@ -121,6 +124,16 @@
     if (state.coldAddr && !flows.selfsend.addr) acceptAddr(state.coldAddr, true);
   }
   $('refresh').addEventListener('click', refresh);
+
+  // Clear: the server renames the received and built files to *.old, then the page starts again from scratch
+  // (the token is kept in sessionStorage, so the reload needs no new URL).
+  $('clear').addEventListener('click', async () => {
+    if (!confirm('Forget the datum, the cold address, the witnesses and every built or signed transaction?\n\n'
+      + 'The files are renamed to *.old in the folder; the sponsor\'s keys are not touched. Transactions already submitted stay on chain.')) return;
+    $('clear').disabled = true;
+    try { await api('clear'); } catch (e) { fatal(e.message); $('clear').disabled = false; return; }
+    location.reload();
+  });
 
   // ---------------------------------------------------------------- tabs
 

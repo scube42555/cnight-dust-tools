@@ -104,7 +104,11 @@ video { width: 100%; max-width: 420px; border-radius: 6px; background: #000; }
       <dt>Mapping validator</dt><dd id="validator">—</dd>
     </dl>
     <div id="statusWarn" class="banner warn" hidden></div>
-    <div class="actions"><button id="refresh" class="secondary" type="button">Refresh</button></div>
+    <div class="actions">
+      <button id="refresh" class="secondary" type="button" title="Read the node and the sponsor's UTxOs again; nothing else changes">Refresh node and sponsor</button>
+      <button id="clear" class="secondary" type="button" title="Forget the received datum, cold address, witnesses and built transactions">Clear and start over</button>
+      <span id="refreshed" class="qrmeta"></span>
+    </div>
     <div class="tabs" role="tablist">
       <button id="tabReg" role="tab" type="button" aria-selected="true">Registration</button>
       <button id="tabMove" role="tab" type="button" aria-selected="false">Start generation (optional self-send)</button>
@@ -14573,7 +14577,10 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   // ---------------------------------------------------------------- status
 
   async function refresh() {
-    try { state = await api('state'); } catch (e) { fatal(e.message); return; }
+    $('refresh').disabled = true;
+    $('refreshed').textContent = 'Reading the node and the sponsor…';
+    try { state = await api('state'); } catch (e) { fatal(e.message); $('refreshed').textContent = ''; return; } finally { $('refresh').disabled = false; }
+    $('refreshed').textContent = `Updated ${new Date().toLocaleTimeString()}`;
     $('fatal').hidden = true;
     const net = $('net');
     net.textContent = state.network === 'mainnet' ? 'MAINNET' : state.network;
@@ -14603,6 +14610,16 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     if (state.coldAddr && !flows.selfsend.addr) acceptAddr(state.coldAddr, true);
   }
   $('refresh').addEventListener('click', refresh);
+
+  // Clear: the server renames the received and built files to *.old, then the page starts again from scratch
+  // (the token is kept in sessionStorage, so the reload needs no new URL).
+  $('clear').addEventListener('click', async () => {
+    if (!confirm('Forget the datum, the cold address, the witnesses and every built or signed transaction?\n\n'
+      + 'The files are renamed to *.old in the folder; the sponsor\'s keys are not touched. Transactions already submitted stay on chain.')) return;
+    $('clear').disabled = true;
+    try { await api('clear'); } catch (e) { fatal(e.message); $('clear').disabled = false; return; }
+    location.reload();
+  });
 
   // ---------------------------------------------------------------- tabs
 
