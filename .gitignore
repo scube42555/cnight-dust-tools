@@ -37,3 +37,5 @@ prepare-sponsor-tx.hash
 
 # Private test log (transaction ids, addresses, dates)
 TEST-LOG.md
+sweep-tx.hash
+sweep-*.json
