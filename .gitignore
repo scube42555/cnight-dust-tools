@@ -39,3 +39,6 @@ prepare-sponsor-tx.hash
 TEST-LOG.md
 sweep-tx.hash
 sweep-*.json
+
+# Python QR libraries for tools/qr_scan.py (tools/fetch-python-QR-libs.sh)
+pylibs/
