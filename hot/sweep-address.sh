@@ -22,8 +22,21 @@
 # The transaction is shown, then signed with payment.skey and submitted only after you type the last 8 characters of
 # the destination and then SUBMIT. Writes sweep.unsigned, sweep.signed and sweep-tx.hash.
 #
-# Environment: CARDANO_CLI (path to cardano-cli), CARDANO_NODE_NETWORK_ID (mainnet, or 1 for preprod), SOCKET_PATH,
-#   TTL_SLOTS (default 7200), ALLOW_SCRIPT_DEST.
+# Requirements: cardano-cli and a synced cardano-node reachable through its node.socket. Set these before running:
+#   CARDANO_CLI              path to cardano-cli, if it is not on your PATH (checked against cardano-cli 11.2.3)
+#   SOCKET_PATH              the node's socket (default /ada/mainnet/db/node.socket)
+#   CARDANO_NODE_NETWORK_ID  mainnet (the default), or 1 for preprod
+#   TTL_SLOTS                validity window in slots (default 7200); ALLOW_SCRIPT_DEST=1 allows a script destination
+#
+# If the node runs on another machine, forward its socket to a local path over SSH first, in a separate terminal
+# (it stays open until Ctrl-C; the remote user must be able to read and write the socket):
+#
+#   ssh -nNT -o StreamLocalBindUnlink=yes -L /tmp/mainnet.socket:/ada/mainnet/db/node.socket user@node-host
+#
+# then run, for example:
+#
+#   CARDANO_CLI=/path/to/cardano-cli SOCKET_PATH=/tmp/mainnet.socket \
+#     hot/sweep-address.sh payment.addr payment.skey <destination>
 set -euo pipefail
 
 CLI="${CARDANO_CLI:-cardano-cli}"
@@ -39,6 +52,13 @@ FROM="$(tr -d '[:space:]' < "${1:?$USAGE}")"
 SKEY="${2:?$USAGE}"
 DEST_ARG="${3:?$USAGE}"
 if [[ -f "$DEST_ARG" ]]; then DEST="$(tr -d '[:space:]' < "$DEST_ARG")"; else DEST="$(tr -d '[:space:]' <<< "$DEST_ARG")"; fi
+
+if [[ ! -S "$SOCKET_PATH" ]]; then
+  echo "No node socket at $SOCKET_PATH. Set SOCKET_PATH, or forward a remote node's socket first:" >&2
+  echo "  ssh -nNT -o StreamLocalBindUnlink=yes -L /tmp/mainnet.socket:/ada/mainnet/db/node.socket user@node-host" >&2
+  exit 1
+fi
+command -v "$CLI" > /dev/null || { echo "cardano-cli not found ($CLI). Set CARDANO_CLI to its path." >&2; exit 1; }
 
 echo "Network: $CARDANO_NODE_NETWORK_ID"
 

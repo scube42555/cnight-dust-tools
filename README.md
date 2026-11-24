@@ -182,9 +182,35 @@ Open `dust-register-cold.html` (or `cold-page.html`) in Tor Browser and drop the
 frames. The pages need JavaScript and WebAssembly, which Tor Browser's *Standard* security level allows (shield icon in
 the toolbar, or Settings → Privacy & Security → Security Level); they cannot reach the network at any level.
 
+### Node socket and cardano-cli
+
+Every hot script and the hot page need cardano-cli and a synced cardano-node, reached through the node's
+`node.socket`. Set `CARDANO_CLI` to the path of cardano-cli if it is not on your PATH, and `SOCKET_PATH` to the socket
+(default `/ada/mainnet/db/node.socket`).
+
+If the node runs on another machine, forward its socket to a local path over SSH, in a separate terminal that stays
+open while you work (Ctrl-C closes it). The remote user must be able to read and write the socket:
+
+```bash
+ssh -nNT -o StreamLocalBindUnlink=yes -L /tmp/mainnet.socket:/ada/mainnet/db/node.socket user@node-host
+```
+
+Then point the scripts at the local end:
+
+```bash
+export CARDANO_CLI=/path/to/cardano-cli
+export SOCKET_PATH=/tmp/mainnet.socket
+"$CARDANO_CLI" conway query tip --socket-path "$SOCKET_PATH" --mainnet   # check the node answers and is synced
+hot/sweep-address.sh payment.addr payment.skey <destination>
+```
+
+The hot page takes the same socket with `--socket /tmp/mainnet.socket`. For preprod, forward the preprod node's
+socket (for example to `/tmp/preprod.socket`) and set `CARDANO_NODE_NETWORK_ID=1`.
+
 ### Mainnet
 
-Mainnet is the default everywhere; nothing needs to be set for the network except the node socket.
+Mainnet is the default everywhere; nothing needs to be set for the network except the node socket (see
+[Node socket and cardano-cli](#node-socket-and-cardano-cli)).
 
 - **Cold page:** *Network: Mainnet* (the default). The mapping validator `73e4aea3…` and the cNIGHT policy `0691b2fe…`
   are fixed and cannot be edited. Copy `dust-register-cold.html` to the cold machine and compare its SHA-256 with the
@@ -198,11 +224,14 @@ Mainnet is the default everywhere; nothing needs to be set for the network excep
   If the sponsor's ADA is not split that way (one UTxO only, or ADA sitting with tokens such as cNIGHT), run
   `hot/prepare-sponsor.sh payment.addr payment.skey`: it sends everything back to the sponsor's own address as a 2 ADA
   collateral UTxO, one UTxO holding any tokens with the minimum ADA, and the rest as the paying UTxO, after a typed SUBMIT.
+  It needs `CARDANO_CLI` and `SOCKET_PATH` set, with the socket forwarded over SSH if the node is remote (see
+  [Node socket and cardano-cli](#node-socket-and-cardano-cli)).
 - **Emptying the sponsor:** `hot/sweep-address.sh payment.addr payment.skey <destination>` sends every UTxO at the
   address (all its ADA and tokens, less the fee) to the destination in one transaction, after you type the
   destination's last 8 characters and then SUBMIT. It refuses a destination on another network or at a script address.
   Staking rewards and the stake key deposit are not UTxOs and stay with the stake key; the cold wallet cannot be swept
-  this way (its key is on the cold machine).
+  this way (its key is on the cold machine). It needs `CARDANO_CLI` and `SOCKET_PATH` set, with the socket forwarded
+  over SSH if the node is remote (see [Node socket and cardano-cli](#node-socket-and-cardano-cli)).
 - **Hot scripts:** run them in the folder that holds `datum.json` and the keys, with `SOCKET_PATH` set to your mainnet
   node's socket (default `/ada/mainnet/db/node.socket`) and `CARDANO_CLI` if needed. Leave `CARDANO_NODE_NETWORK_ID` and
   `MAPPING_VALIDATOR` unset: `build-register.sh` stops if the validator does not hash to `73e4aea3…`.
